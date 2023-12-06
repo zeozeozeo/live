@@ -1,10 +1,15 @@
 use crate::hooks;
 use anyhow::Result;
+use egui_modal::{Icon, Modal};
 use geometrydash::{AddressUtils, PlayLayer, PlayerObject};
 use kittyaudio::{Mixer, Sound};
 use once_cell::sync::Lazy;
 use rand::prelude::SliceRandom;
-use std::path::{Path, PathBuf};
+use rfd::FileDialog;
+use std::{
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
 
 /// Global bot state
 pub static mut BOT: Lazy<Box<Bot>> = Lazy::new(|| Box::new(Bot::default()));
@@ -38,6 +43,34 @@ pub enum ClickType {
     MicroRelease,
     #[default]
     None,
+}
+
+impl ClickType {
+    pub fn from_time(push: bool, time: f32, timings: &Timings) -> Self {
+        if time > timings.hard {
+            if push {
+                Self::HardClick
+            } else {
+                Self::HardRelease
+            }
+        } else if time > timings.regular {
+            if push {
+                Self::Click
+            } else {
+                Self::Release
+            }
+        } else if time > timings.soft {
+            if push {
+                Self::SoftClick
+            } else {
+                Self::SoftRelease
+            }
+        } else if push {
+            Self::MicroClick
+        } else {
+            Self::MicroRelease
+        }
+    }
 }
 
 #[derive(Default)]
@@ -120,7 +153,7 @@ impl Sounds {
     }
 
     #[inline]
-    pub fn has_sounds(&self) -> bool {
+    pub fn num_sounds(&self) -> usize {
         [
             &self.hardclicks,
             &self.hardreleases,
@@ -132,7 +165,13 @@ impl Sounds {
             &self.microreleases,
         ]
         .iter()
-        .any(|c| !c.is_empty())
+        .map(|c| c.len())
+        .sum()
+    }
+
+    #[inline]
+    pub fn has_sounds(&self) -> bool {
+        self.num_sounds() > 0
     }
 
     pub fn random_sound(&self, typ: ClickType) -> Option<Sound> {
@@ -172,6 +211,11 @@ pub struct Bot {
     pub noise: Option<Sound>,
     pub mixer: Mixer,
     pub playlayer: PlayLayer,
+    pub prev_time: f64,
+    pub timings: Timings,
+    pub is_loading_clickpack: bool,
+    pub num_sounds: (usize, usize),
+    pub selected_clickpack: String,
 }
 
 impl Default for Bot {
@@ -181,6 +225,11 @@ impl Default for Bot {
             noise: None,
             mixer: Mixer::new(),
             playlayer: PlayLayer::from_address(0),
+            prev_time: 0.0,
+            timings: Timings::default(),
+            is_loading_clickpack: false,
+            num_sounds: (0, 0),
+            selected_clickpack: String::new(),
         }
     }
 }
@@ -195,8 +244,22 @@ const PLAYER_DIRNAMES: [(&str, &str); 7] = [
     ("", ""),
 ];
 
+fn help_text<R>(ui: &mut egui::Ui, help: &str, add_contents: impl FnOnce(&mut egui::Ui) -> R) {
+    if help.is_empty() {
+        return;
+    }
+    ui.horizontal(|ui| {
+        add_contents(ui);
+        ui.add_enabled_ui(false, |ui| ui.label("(?)").on_disabled_hover_text(help));
+    });
+}
+
 impl Bot {
     pub fn load_clickpack(&mut self, clickpack_dir: &Path) -> Result<()> {
+        // reset current clickpack
+        self.num_sounds = (0, 0);
+        self.players = (Sounds::default(), Sounds::default());
+
         for player_dirnames in PLAYER_DIRNAMES {
             let mut player1_path = clickpack_dir.to_path_buf();
             player1_path.push(player_dirnames.0);
@@ -219,6 +282,21 @@ impl Bot {
         self.load_noise(&clickpack_dir);
 
         anyhow::ensure!(self.has_sounds(), "no sounds found in clickpack");
+
+        self.num_sounds = (self.players.0.num_sounds(), self.players.1.num_sounds());
+        self.selected_clickpack = clickpack_dir
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        log::info!(
+            "loaded clickpack \"{}\", {} sounds",
+            self.selected_clickpack,
+            self.num_sounds.0 + self.num_sounds.1
+        );
+        log::info!("{} player 1 sounds", self.num_sounds.0);
+        log::info!("{} player 2 sounds", self.num_sounds.1);
         Ok(())
     }
 
@@ -248,13 +326,15 @@ impl Bot {
         }
     }
 
-    pub fn run(&mut self) {
+    pub fn init(&mut self) {
         // init audio playback
         self.mixer.init();
 
         // init game hooks
         unsafe { hooks::init_hooks() };
+    }
 
+    pub fn run(&mut self) {
         // run until end of time
         loop {
             std::thread::sleep(std::time::Duration::from_millis(50));
@@ -271,15 +351,84 @@ impl Bot {
     }
 
     pub fn on_action(&mut self, push: bool, player2: bool) {
-        let click = self.get_random_click(
-            if push {
-                ClickType::Click
-            } else {
-                ClickType::Release
-            },
-            player2,
-        );
+        return;
+        let now = self.playlayer.time();
+        let click_type = ClickType::from_time(push, (now - self.prev_time) as f32, &self.timings);
+        let click = self.get_random_click(click_type, player2);
 
         self.mixer.play(click);
+        self.prev_time = now;
+    }
+
+    pub fn draw_ui(&mut self, ctx: &egui::Context) {
+        egui::Window::new("Clickpack").show(ctx, |ui| {
+            let modal = Modal::new(ctx, "clickpack_modal");
+            let modal = Arc::new(Mutex::new(modal));
+            self.show_clickpack_window(ui, modal);
+        });
+    }
+
+    fn show_clickpack_window(&mut self, ui: &mut egui::Ui, modal: Arc<Mutex<Modal>>) {
+        if self.is_loading_clickpack {
+            ui.label("Loading clickpack...");
+        }
+        let has_sounds = self.num_sounds != (0, 0);
+        ui.add_enabled_ui(!self.is_loading_clickpack, |ui| {
+            ui.horizontal(|ui| {
+                if ui
+                    .button("Select clickpack")
+                    .on_disabled_hover_text("Please wait...")
+                    .clicked()
+                {
+                    std::thread::spawn(move || {
+                        let Some(dir) = FileDialog::new().pick_folder() else {
+                            return;
+                        };
+                        log::info!("selected clickpack {:?}", dir);
+
+                        // load clickpack on this thread
+                        unsafe { BOT.is_loading_clickpack = true };
+                        if let Err(e) = unsafe { BOT.load_clickpack(&dir) } {
+                            log::error!("failed to load clickpack: {e}");
+                            modal
+                                .lock()
+                                .unwrap()
+                                .dialog()
+                                .with_title("Failed to load clickpack!")
+                                .with_body(e)
+                                .with_icon(Icon::Error)
+                                .open();
+                        }
+                        unsafe { BOT.is_loading_clickpack = false };
+                    });
+                }
+                if has_sounds {
+                    ui.label(format!(
+                        "Selected clickpack: \"{}\"",
+                        self.selected_clickpack
+                    ));
+                }
+            });
+        });
+        if has_sounds {
+            help_text(
+                ui,
+                if self.num_sounds.1 == 0 {
+                    "To add player 2 sounds, make a folder called \"player2\" and put\n\
+                    sounds for the second player there"
+                } else {
+                    "" // will not be shown
+                },
+                |ui| {
+                    ui.label(format!(
+                        "{} player 1 sounds, {} player 2 sounds ({} in total)",
+                        self.num_sounds.0,
+                        self.num_sounds.1,
+                        self.num_sounds.0 + self.num_sounds.1
+                    ));
+                },
+            );
+        }
+        ui.separator();
     }
 }

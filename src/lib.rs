@@ -1,6 +1,7 @@
 mod bot;
 mod hooks;
 
+use bot::BOT;
 use retour::static_detour;
 use std::ffi::c_void;
 use windows::Win32::{
@@ -90,6 +91,9 @@ unsafe extern "system" fn zcblive_main(_dll: *mut c_void) -> u32 {
 
     let (sx, rx) = std::sync::mpsc::channel();
 
+    // init bot
+    BOT.init();
+
     // initialize swapbuffers hook
     h_wglSwapBuffers
         .initialize(swap_buffers, move |hdc| {
@@ -107,15 +111,7 @@ unsafe extern "system" fn zcblive_main(_dll: *mut c_void) -> u32 {
             egui_gl_hook::paint(
                 hdc,
                 Box::new(|ctx| {
-                    egui::Window::new("www.sexmods.com/gd").show(ctx, |ui| {
-                        for _ in 0..5 {
-                            ui.horizontal(|ui| {
-                                for _ in 0..5 {
-                                    ui.label("Hello World!");
-                                }
-                            });
-                        }
-                    });
+                    BOT.draw_ui(ctx);
                 }),
             )
             .expect("failed to call paint()");
@@ -133,7 +129,7 @@ unsafe extern "system" fn zcblive_main(_dll: *mut c_void) -> u32 {
     O_WNDPROC = Some(SetWindowLongPtrA(hwnd, GWLP_WNDPROC, h_wndproc as _));
 
     // start bot
-    bot::BOT.run();
+    // bot().run();
 
     0
 }

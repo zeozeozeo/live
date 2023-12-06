@@ -1,7 +1,6 @@
+use crate::BOT;
 use geometrydash::{get_base, PlayLayer, PlayerObject, Ptr};
 use retour::static_detour;
-
-use crate::bot::BOT;
 
 /// pushButton/releaseButton methods that take [PlayerObject].
 type FnPushButton = unsafe extern "fastcall" fn(PlayerObject, Ptr, i32) -> bool;
