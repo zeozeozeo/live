@@ -22,14 +22,14 @@ static_detour! {
 
 fn push_button(player: PlayerObject, _edx: Ptr, button: i32) -> bool {
     let res = unsafe { PushButton.call(player, 0, button) };
-    log::info!("pushbutton: {button}, ");
+    // log::info!("pushbutton: {button}, ");
     unsafe { BOT.on_action(true, BOT.is_player2_obj(player)) };
     res
 }
 
 fn release_button(player: PlayerObject, _edx: Ptr, button: i32) -> bool {
     let res = unsafe { ReleaseButton.call(player, 0, button) };
-    log::info!("relebutton: {button}");
+    // log::info!("releasebutton: {button}");
 
     // apparently `button` is 0x77261cfc when the action happens on
     // entering pause menu or restarting level, it is not always 0

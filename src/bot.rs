@@ -1,5 +1,6 @@
 use crate::{hooks, utils};
 use anyhow::Result;
+use egui::{Color32, RichText};
 use egui_modal::{Icon, Modal};
 use geometrydash::{AddressUtils, PlayLayer, PlayerObject};
 use kittyaudio::{Device, Mixer, PlaybackRate, Sound, StreamSettings};
@@ -48,6 +49,31 @@ impl Default for Pitch {
             from: 0.95,
             to: 1.05,
             step: 0.001,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+pub struct VolumeSettings {
+    pub enabled: bool,
+    pub spam_time: f32,
+    pub spam_vol_offset_factor: f32,
+    pub max_spam_vol_offset: f32,
+    pub change_releases_volume: bool,
+    pub global_volume: f32,
+    pub volume_var: f32,
+}
+
+impl Default for VolumeSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            spam_time: 0.3,
+            spam_vol_offset_factor: 0.9,
+            max_spam_vol_offset: 0.3,
+            change_releases_volume: false,
+            global_volume: 1.0,
+            volume_var: 0.2,
         }
     }
 }
@@ -259,6 +285,7 @@ pub struct Config {
     pub pitch_enabled: bool,
     pub pitch: Pitch,
     pub timings: Timings,
+    pub volume_settings: VolumeSettings,
     #[serde(default = "String::new", skip_serializing_if = "String::is_empty")]
     pub selected_device: String,
     #[serde(default = "true_value")]
@@ -273,6 +300,7 @@ impl Default for Config {
             pitch_enabled: true,
             pitch: Pitch::default(),
             timings: Timings::default(),
+            volume_settings: VolumeSettings::default(),
             selected_device: String::new(),
             enabled: true,
             hidden: false,
@@ -520,6 +548,10 @@ impl Bot {
         // get click
         let mut click = self.get_random_click(click_type, player2);
         click.set_playback_rate(PlaybackRate::Factor(self.get_pitch()));
+        {
+            let vol = &self.conf.volume_settings;
+            click.set_volume(vol.global_volume);
+        }
 
         self.mixer.play(click);
         self.prev_time = now;
@@ -542,6 +574,9 @@ impl Bot {
             self.show_clickpack_window(ui, modal.clone());
             modal.lock().unwrap().show_dialog();
         });
+        egui::Window::new("Options").show(ctx, |ui| {
+            self.show_options_window(ui);
+        });
         egui::Window::new("Audio").show(ctx, |ui| {
             ui.checkbox(&mut self.conf.enabled, "Enable clickbot");
             ui.separator();
@@ -549,7 +584,6 @@ impl Bot {
                 self.show_audio_window(ui);
             });
         });
-        egui::Window::new("Options").show(ctx, |ui| self.show_options_window(ui));
     }
 
     fn show_options_window(&mut self, ui: &mut egui::Ui) {
@@ -610,10 +644,56 @@ impl Bot {
             ui.add_enabled_ui(self.conf.pitch_enabled, |ui| {
                 let p = &mut self.conf.pitch;
                 help_text(ui, "Minimum pitch value. 1.0 means no change", |ui| {
-                    ui.add(egui::Slider::new(&mut p.from, 0.0..=p.to).text("Minimum pitch"));
+                    ui.horizontal(|ui| {
+                        let dragged = ui
+                            .add(
+                                egui::DragValue::new(&mut p.from)
+                                    .clamp_range(0.0..=p.to)
+                                    .speed(0.01),
+                            )
+                            .dragged();
+                        let mut text = RichText::new("Minimum pitch");
+                        if dragged && (p.from == 0.0 || p.from == p.to) {
+                            text = text.color(Color32::LIGHT_RED);
+                        }
+                        ui.label(text);
+                    });
                 });
                 help_text(ui, "Maximum pitch value. 1.0 means no change", |ui| {
-                    ui.add(egui::Slider::new(&mut p.to, p.from..=50.0).text("Maxiumum pitch"));
+                    ui.horizontal(|ui| {
+                        let dragged = ui
+                            .add(
+                                egui::DragValue::new(&mut p.to)
+                                    .clamp_range(p.from..=f64::INFINITY)
+                                    .speed(0.01),
+                            )
+                            .dragged();
+                        let mut text = RichText::new("Maximum pitch");
+                        if dragged && p.to == p.from {
+                            text = text.color(Color32::LIGHT_RED);
+                        }
+                        ui.label(text);
+                    });
+                });
+            });
+        });
+
+        ui.collapsing("Volume settings", |ui| {
+            let vol = &mut self.conf.volume_settings;
+            help_text(ui, "Constant volume multiplier for all sounds", |ui| {
+                ui.horizontal(|ui| {
+                    let dragged = ui
+                        .add(
+                            egui::DragValue::new(&mut vol.global_volume)
+                                .clamp_range(0.0..=f64::INFINITY)
+                                .speed(0.01),
+                        )
+                        .dragged();
+                    let mut text = RichText::new("Global volume");
+                    if dragged && vol.global_volume == 0.0 {
+                        text = text.color(Color32::LIGHT_RED);
+                    }
+                    ui.label(text);
                 });
             });
         });
@@ -683,5 +763,12 @@ impl Bot {
                 },
             );
         }
+
+        ui.separator();
+
+        let dur = Duration::from_secs_f64(self.prev_time);
+        help_text(ui, &format!("{dur:?} since the start of the level"), |ui| {
+            ui.label(format!("Last action time: {dur:.2?}"));
+        });
     }
 }
