@@ -493,9 +493,9 @@ dependencies = [
 
 [[package]]
 name = "geometrydash"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c92a4ccacbae6cc4ee08de328b8bc2e51b8e05df7a47ac2084af33c5a9051c5"
+checksum = "8fb28d8e368ec83d494247c40bdb06fd2c367bfe4d0e6c45a3b9a47e9e45b5b8"
 dependencies = [
  "bindgen",
  "windows 0.52.0",
@@ -690,8 +690,9 @@ dependencies = [
 
 [[package]]
 name = "kittyaudio"
-version = "0.1.5"
-source = "git+https://github.com/zeozeozeo/kittyaudio#2ff61e8c531f9ffec22d218a095f0c0b620525d5"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f4743ba2d8bae5201611ad53a43367d623622cfdab02b9631135f7286092002"
 dependencies = [
  "cpal",
  "parking_lot",
@@ -759,6 +760,8 @@ dependencies = [
  "rand",
  "retour",
  "rfd",
+ "serde",
+ "serde_json",
  "simple_logger",
  "windows 0.52.0",
 ]
@@ -1252,6 +1255,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ryu"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ad4cc8da4ef723ed60bced201181d83791ad433213d8c24efffda1eec85d741"
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1284,6 +1293,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.39",
+]
+
+[[package]]
+name = "serde_json"
+version = "1.0.108"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d1c7e3eac408d115102c4c24ad393e0821bb3a5df4d506a80f85f7a742a526b"
+dependencies = [
+ "itoa",
+ "ryu",
+ "serde",
 ]
 
 [[package]]

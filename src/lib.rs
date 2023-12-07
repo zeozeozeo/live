@@ -1,16 +1,17 @@
 mod bot;
 mod hooks;
+mod utils;
 
 use bot::BOT;
 use retour::static_detour;
 use std::ffi::c_void;
 use windows::Win32::{
-    Foundation::{HWND, LPARAM, LRESULT, WPARAM},
+    Foundation::{BOOL, HWND, LPARAM, LRESULT, TRUE, WPARAM},
     Graphics::Gdi::{WindowFromDC, HDC},
     System::{
         Console::AllocConsole,
         LibraryLoader::{GetModuleHandleA, GetProcAddress},
-        SystemServices::DLL_PROCESS_ATTACH,
+        SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH},
         Threading::{CreateThread, THREAD_CREATION_FLAGS},
     },
     UI::WindowsAndMessaging::{CallWindowProcA, SetWindowLongPtrA, GWLP_WNDPROC},
@@ -53,19 +54,25 @@ unsafe extern "system" fn h_wndproc(
 
 /// DLL entrypoint
 #[no_mangle]
-pub unsafe extern "system" fn DllMain(dll: u32, reason: u32, _reserved: *mut c_void) -> u32 {
-    if reason == DLL_PROCESS_ATTACH {
-        CreateThread(
-            None,
-            0,
-            Some(zcblive_main),
-            Some(dll as _),
-            THREAD_CREATION_FLAGS(0),
-            None,
-        )
-        .unwrap();
+pub unsafe extern "system" fn DllMain(dll: u32, reason: u32, _reserved: *mut c_void) -> BOOL {
+    match reason {
+        DLL_PROCESS_ATTACH => {
+            CreateThread(
+                None,
+                0,
+                Some(zcblive_main),
+                Some(dll as _),
+                THREAD_CREATION_FLAGS(0),
+                None,
+            )
+            .unwrap();
+        }
+        DLL_PROCESS_DETACH => {
+            hooks::disable_hooks();
+        }
+        _ => {}
     }
-    1
+    TRUE
 }
 
 /// Main function
@@ -130,6 +137,5 @@ unsafe extern "system" fn zcblive_main(_dll: *mut c_void) -> u32 {
 
     // start bot
     // bot().run();
-
     0
 }
