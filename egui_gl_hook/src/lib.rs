@@ -442,6 +442,7 @@ fn get_key(wparam: usize) -> Option<Key> {
     match wparam {
         0x30..=0x39 => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x1F)) },
         0x41..=0x5A => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x26)) },
+        0x60..=0x69 => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x4F)) },
         0x70..=0x83 => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x3B)) },
         _ => match VIRTUAL_KEY(wparam as u16) {
             VK_DOWN => Some(Key::ArrowDown),
@@ -459,6 +460,7 @@ fn get_key(wparam: usize) -> Option<Key> {
             VK_END => Some(Key::End),
             VK_PRIOR => Some(Key::PageUp),
             VK_NEXT => Some(Key::PageDown),
+            VK_SUBTRACT => Some(Key::Minus),
             _ => None,
         },
     }

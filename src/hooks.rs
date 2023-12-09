@@ -31,11 +31,8 @@ fn release_button(player: PlayerObject, _edx: Ptr, button: i32) -> bool {
     let res = unsafe { ReleaseButton.call(player, 0, button) };
     // log::info!("releasebutton: {button}");
 
-    // apparently `button` is 0x77261cfc when the action happens on
-    // entering pause menu or restarting level, it is not always 0
-    // if the level has an active click counter trigger
-
-    if button != 0x77261cfc {
+    // what? FIXME
+    if button != 2011438332 {
         unsafe { BOT.on_action(false, BOT.is_player2_obj(player)) };
     }
     res

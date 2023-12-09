@@ -1,9 +1,11 @@
 use crate::{hooks, utils};
 use anyhow::Result;
-use egui::{Color32, RichText};
+use egui::{pos2, vec2, Align2, Color32, Direction, Key, KeyboardShortcut, Modifiers, RichText};
+use egui_keybind::{Bind, Keybind, Shortcut};
 use egui_modal::{Icon, Modal};
+use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 use geometrydash::{AddressUtils, PlayLayer, PlayerObject};
-use kittyaudio::{Device, Mixer, PlaybackRate, Sound, StreamSettings};
+use kittyaudio::{Device, Mixer, PlaybackRate, Sound, SoundHandle, StreamSettings};
 use once_cell::sync::Lazy;
 use rand::{prelude::SliceRandom, Rng};
 use rfd::FileDialog;
@@ -78,7 +80,7 @@ impl Default for VolumeSettings {
     }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, Debug, PartialEq)]
 pub enum ClickType {
     HardClick,
     HardRelease,
@@ -135,6 +137,17 @@ impl ClickType {
             MicroRelease => [MicroRelease, SoftRelease,  Release,     HardRelease , MicroRelease, SoftRelease,  Release,     HardRelease ],
             None =>         [None,         None,         None,        None        , None,         None,         None,        None        ],
         }
+    }
+
+    #[inline]
+    pub const fn is_release(self) -> bool {
+        matches!(
+            self,
+            ClickType::HardRelease
+                | ClickType::Release
+                | ClickType::SoftRelease
+                | ClickType::MicroRelease
+        )
     }
 }
 
@@ -239,7 +252,7 @@ impl Sounds {
         self.num_sounds() > 0
     }
 
-    pub fn random_sound(&self, typ: ClickType) -> Option<Sound> {
+    pub fn random_sound(&self, typ: ClickType) -> Option<(Sound, ClickType)> {
         let thread_rng = &mut rand::thread_rng();
         for typ in typ.preferred() {
             let sound = match typ {
@@ -254,7 +267,7 @@ impl Sounds {
                 _ => None,
             };
             if let Some(sound) = sound {
-                return Some(sound.clone());
+                return Some((sound.clone(), typ));
             }
         }
         None
@@ -276,8 +289,42 @@ impl Sounds {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+pub struct Shortcuts {
+    pub toggle_menu: Shortcut,
+    pub toggle_bot: Shortcut,
+    pub toggle_noise: Shortcut,
+}
+
+impl Default for Shortcuts {
+    fn default() -> Self {
+        Self {
+            toggle_menu: Shortcut::new(
+                Some(KeyboardShortcut::new(Modifiers::NONE, Key::Num1)),
+                None,
+            ),
+            toggle_bot: Shortcut::new(
+                Some(KeyboardShortcut::new(Modifiers::NONE, Key::Num2)),
+                None,
+            ),
+            toggle_noise: Shortcut::NONE,
+        }
+    }
+}
+
+#[inline]
 fn true_value() -> bool {
     true
+}
+
+#[inline]
+fn default_buffer_size() -> u32 {
+    512
+}
+
+#[inline]
+fn f32_one() -> f32 {
+    1.0
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
@@ -286,12 +333,27 @@ pub struct Config {
     pub pitch: Pitch,
     pub timings: Timings,
     pub volume_settings: VolumeSettings,
+    #[serde(default = "Shortcuts::default")]
+    pub shortcuts: Shortcuts,
     #[serde(default = "String::new", skip_serializing_if = "String::is_empty")]
     pub selected_device: String,
     #[serde(default = "true_value")]
     pub enabled: bool,
     #[serde(default = "bool::default")]
     pub hidden: bool,
+    #[serde(default = "default_buffer_size")]
+    pub buffer_size: u32,
+    #[serde(default = "bool::default")]
+    pub play_noise: bool,
+    #[serde(default = "f32_one")]
+    pub noise_volume: f32,
+}
+
+impl Config {
+    pub fn fixup(mut self) -> Self {
+        self.buffer_size = self.buffer_size.max(1);
+        self
+    }
 }
 
 impl Default for Config {
@@ -301,9 +363,13 @@ impl Default for Config {
             pitch: Pitch::default(),
             timings: Timings::default(),
             volume_settings: VolumeSettings::default(),
+            shortcuts: Shortcuts::default(),
             selected_device: String::new(),
             enabled: true,
             hidden: false,
+            buffer_size: default_buffer_size(),
+            play_noise: false,
+            noise_volume: 1.0,
         }
     }
 }
@@ -360,11 +426,18 @@ pub struct Bot {
     pub devices: Arc<Mutex<Vec<String>>>,
     pub last_conf_save: Instant,
     pub prev_conf: Config,
+    pub prev_click_type: ClickType,
+    pub prev_resolved_click_type: ClickType,
+    pub prev_pitch: f64,
+    pub prev_volume: f32,
+    pub prev_spam_offset: f32,
+    pub buffer_size_changed: bool,
+    pub noise_sound: Option<SoundHandle>,
 }
 
 impl Default for Bot {
     fn default() -> Self {
-        let conf = Config::load().unwrap_or_default();
+        let conf = Config::load().unwrap_or_default().fixup();
         Self {
             conf: conf.clone(),
             players: (Sounds::default(), Sounds::default()),
@@ -379,6 +452,13 @@ impl Default for Bot {
             devices: Arc::new(Mutex::new(vec![])),
             last_conf_save: Instant::now(),
             prev_conf: conf,
+            prev_click_type: ClickType::None,
+            prev_resolved_click_type: ClickType::None,
+            prev_pitch: f64::NAN,
+            prev_volume: f32::NAN,
+            prev_spam_offset: f32::NAN,
+            buffer_size_changed: false,
+            noise_sound: None,
         }
     }
 }
@@ -404,11 +484,27 @@ fn help_text<R>(ui: &mut egui::Ui, help: &str, add_contents: impl FnOnce(&mut eg
     });
 }
 
+/// Value is always min clamped with 1.
+fn u32_edit_field_min1(ui: &mut egui::Ui, value: &mut u32) -> egui::Response {
+    let mut tmp_value = format!("{value}");
+    let res = ui.text_edit_singleline(&mut tmp_value);
+    if let Ok(result) = tmp_value.parse::<u32>() {
+        *value = result.max(1);
+    }
+    res
+}
+
 impl Bot {
     pub fn load_clickpack(&mut self, clickpack_dir: &Path) -> Result<()> {
         // reset current clickpack
         self.num_sounds = (0, 0);
         self.players = (Sounds::default(), Sounds::default());
+        self.noise = None;
+        if let Some(noise_sound) = self.noise_sound.take() {
+            noise_sound.seek_to_end();
+            noise_sound.set_loop_enabled(false);
+            noise_sound.set_playback_rate(PlaybackRate::Factor(0.0));
+        }
 
         for player_dirnames in PLAYER_DIRNAMES {
             let mut player1_path = clickpack_dir.to_path_buf();
@@ -447,6 +543,14 @@ impl Bot {
         );
         log::info!("{} player 1 sounds", self.num_sounds.0);
         log::info!("{} player 2 sounds", self.num_sounds.1);
+        log::info!("has noise: {}", self.noise.is_some());
+
+        // start playing the new noise file if the one from the previous clickpack
+        // was playing
+        if self.conf.play_noise {
+            self.play_noise(false);
+        }
+
         Ok(())
     }
 
@@ -462,7 +566,7 @@ impl Bot {
         self.players.0.has_sounds() || self.players.1.has_sounds()
     }
 
-    fn get_random_click(&self, typ: ClickType, player2: bool) -> Sound {
+    fn get_random_click(&self, typ: ClickType, player2: bool) -> (Sound, ClickType) {
         if player2 {
             self.players
                 .1
@@ -478,14 +582,7 @@ impl Bot {
 
     pub fn init(&mut self) {
         // if the config specifies a custom device, try to find it
-        let device = if !self.conf.selected_device.is_empty() {
-            self.selected_device = self.conf.selected_device.clone();
-            Device::from_name(&self.conf.selected_device).unwrap_or_default()
-        } else {
-            log::debug!("using default device");
-            self.selected_device = Device::Default.name().unwrap_or_default();
-            Device::Default
-        };
+        let device = self.get_device();
 
         // update thread
         #[cfg(feature = "special")]
@@ -509,7 +606,13 @@ impl Bot {
 
         // init audio playback
         log::debug!("starting kittyaudio playback thread");
-        self.mixer.init_ex(device, StreamSettings::default());
+        self.mixer.init_ex(
+            device,
+            StreamSettings {
+                buffer_size: Some(self.conf.buffer_size),
+                ..Default::default()
+            },
+        );
 
         // init game hooks
         log::debug!("initializing hooks");
@@ -541,23 +644,86 @@ impl Bot {
             return;
         }
 
+        if !self.playlayer.level_settings().is_2player() && player2 {
+            return;
+        }
+
         let now = self.playlayer.time();
-        let click_type =
-            ClickType::from_time(push, (now - self.prev_time) as f32, &self.conf.timings);
+        let dt = (now - self.prev_time) as f32;
+        let click_type = ClickType::from_time(push, dt, &self.conf.timings);
 
         // get click
-        let mut click = self.get_random_click(click_type, player2);
-        click.set_playback_rate(PlaybackRate::Factor(self.get_pitch()));
+        let (mut click, resolved_click_type) = self.get_random_click(click_type, player2);
+        let pitch = self.get_pitch();
+        click.set_playback_rate(PlaybackRate::Factor(pitch));
+
+        // compute & change volume
         {
             let vol = &self.conf.volume_settings;
-            click.set_volume(vol.global_volume);
+            let mut volume = 1.0;
+            if vol.volume_var != 0.0 {
+                volume += rand::thread_rng().gen_range(-vol.volume_var..=vol.volume_var);
+            }
+
+            // calculate spam volume change
+            if vol.enabled
+                && dt < vol.spam_time
+                && !(!vol.change_releases_volume && resolved_click_type.is_release())
+            {
+                let offset = (vol.spam_time - dt) * vol.spam_vol_offset_factor;
+                self.prev_spam_offset = offset;
+                volume -= offset.min(vol.max_spam_vol_offset);
+            } else {
+                self.prev_spam_offset = 0.0;
+            }
+
+            // multiply by global volume after all of the changes
+            volume *= vol.global_volume;
+
+            click.set_volume(volume);
+            self.prev_volume = volume;
         }
 
         self.mixer.play(click);
         self.prev_time = now;
+        self.prev_click_type = click_type;
+        self.prev_resolved_click_type = resolved_click_type;
+        self.prev_pitch = pitch;
+    }
+
+    fn open_clickbot_toggle_toast(&self, toasts: &mut Toasts) {
+        toasts.add(Toast {
+            kind: ToastKind::Info,
+            text: if self.conf.enabled {
+                "Enabled clickbot".into()
+            } else {
+                "Disabled clickbot".into()
+            },
+            options: ToastOptions::default().duration_in_seconds(2.0),
+        });
     }
 
     pub fn draw_ui(&mut self, ctx: &egui::Context) {
+        // process hotkeys
+        let (toggle_menu, toggle_bot, toggle_noise) = ctx.input_mut(|i| {
+            (
+                self.conf.shortcuts.toggle_menu.pressed(i),
+                self.conf.shortcuts.toggle_bot.pressed(i),
+                self.conf.shortcuts.toggle_noise.pressed(i),
+            )
+        });
+        if toggle_menu {
+            self.conf.hidden = !self.conf.hidden;
+        }
+        if toggle_bot {
+            self.conf.enabled = !self.conf.enabled;
+        }
+        if toggle_noise {
+            self.conf.play_noise = !self.conf.play_noise;
+            self.play_noise(false);
+        }
+
+        // don't draw/autosave if not open
         if self.conf.hidden {
             return;
         }
@@ -569,34 +735,208 @@ impl Bot {
             self.prev_conf = self.conf.clone();
         }
 
+        // draw overlay
+        let modal = Arc::new(Mutex::new(Modal::new(ctx, "global_modal")));
+        let mut toasts = Toasts::new()
+            .anchor(Align2::RIGHT_BOTTOM, pos2(-16.0, -16.0))
+            .direction(Direction::BottomUp);
+
+        if toggle_bot {
+            self.open_clickbot_toggle_toast(&mut toasts);
+        }
+        if toggle_noise {
+            self.open_noise_toggle_toast(&mut toasts);
+        }
+
         egui::Window::new("Clickpack").show(ctx, |ui| {
-            let modal = Arc::new(Mutex::new(Modal::new(ctx, "clickpack_modal")));
             self.show_clickpack_window(ui, modal.clone());
-            modal.lock().unwrap().show_dialog();
         });
         egui::Window::new("Options").show(ctx, |ui| {
-            self.show_options_window(ui);
+            self.show_options_window(ui, modal.clone(), &mut toasts);
         });
         egui::Window::new("Audio").show(ctx, |ui| {
-            ui.checkbox(&mut self.conf.enabled, "Enable clickbot");
+            if ui
+                .checkbox(&mut self.conf.enabled, "Enable clickbot")
+                .changed()
+            {
+                self.open_clickbot_toggle_toast(&mut toasts);
+            }
+
             ui.separator();
             ui.add_enabled_ui(self.conf.enabled, |ui| {
-                self.show_audio_window(ui);
+                self.show_audio_window(ui, &mut toasts);
             });
         });
+
+        toasts.show(ctx);
+        modal.lock().unwrap().show_dialog();
     }
 
-    fn show_options_window(&mut self, ui: &mut egui::Ui) {
-        if ui
-            .button("Close")
-            .on_hover_text("Close this overlay")
-            .clicked()
-        {
-            self.conf.hidden = true;
+    fn show_options_window(
+        &mut self,
+        ui: &mut egui::Ui,
+        modal: Arc<Mutex<Modal>>,
+        toasts: &mut Toasts,
+    ) {
+        ui.collapsing("Shortcuts", |ui| {
+            ui.add(
+                Keybind::new(&mut self.conf.shortcuts.toggle_menu, "toggle_menu_keybind")
+                    .with_text("Toggle menu"),
+            );
+            ui.add(
+                Keybind::new(&mut self.conf.shortcuts.toggle_bot, "toggle_bot_keybind")
+                    .with_text("Toggle bot"),
+            );
+            ui.add(
+                Keybind::new(
+                    &mut self.conf.shortcuts.toggle_noise,
+                    "toggle_noise_keybind",
+                )
+                .with_text("Toggle noise"),
+            );
+        });
+        ui.collapsing("Configuration", |ui| {
+            ui.horizontal(|ui| {
+                ui.style_mut().spacing.item_spacing.x = 4.0;
+                if ui
+                    .button("Save")
+                    .on_hover_text("Save the current configuration.\nThis happens automatically!")
+                    .clicked()
+                {
+                    self.conf.save();
+                    toasts.add(Toast {
+                        kind: ToastKind::Success,
+                        text: "Saved configuration to .zcb/config.json".into(),
+                        options: ToastOptions::default().duration_in_seconds(2.0),
+                    });
+                }
+                ui.style_mut().spacing.item_spacing.x = 4.0;
+                if ui
+                    .button("Load")
+                    .on_hover_text("Load the config from .zcb/config.json")
+                    .clicked()
+                {
+                    let conf = Config::load();
+                    if let Ok(conf) = conf {
+                        let prev_bufsize = self.conf.buffer_size;
+                        self.conf = conf;
+                        self.apply_config(prev_bufsize);
+                        toasts.add(Toast {
+                            kind: ToastKind::Success,
+                            text: "Loaded configuration from .zcb/config.json".into(),
+                            options: ToastOptions::default().duration_in_seconds(2.0),
+                        });
+                    } else if let Err(e) = conf {
+                        modal
+                            .lock()
+                            .unwrap()
+                            .dialog()
+                            .with_title("Failed to load config!")
+                            .with_body(utils::capitalize_first_letter(&e.to_string()))
+                            .with_icon(Icon::Error)
+                            .open();
+                    }
+                }
+                if ui
+                    .button("Reset")
+                    .on_hover_text("Reset the current configuration to defaults")
+                    .clicked()
+                {
+                    let prev_bufsize = self.conf.buffer_size;
+                    self.conf = Config::default();
+                    self.apply_config(prev_bufsize);
+                    toasts.add(Toast {
+                        kind: ToastKind::Info,
+                        text: "Reset configuration to defaults".into(),
+                        options: ToastOptions::default().duration_in_seconds(2.0),
+                    });
+                }
+            });
+            ui.label(format!(
+                "Last saved {:.2?} ago",
+                self.last_conf_save.elapsed()
+            ));
+        });
+        ui.allocate_space(ui.available_size() - vec2(0.0, 280.0));
+    }
+
+    fn get_device(&mut self) -> Device {
+        if !self.conf.selected_device.is_empty() {
+            self.selected_device = self.conf.selected_device.clone();
+            Device::from_name(&self.conf.selected_device).unwrap_or_default()
+        } else {
+            log::debug!("using default device");
+            self.selected_device = Device::Default.name().unwrap_or_default();
+            Device::Default
         }
     }
 
-    fn show_audio_window(&mut self, ui: &mut egui::Ui) {
+    fn play_noise(&mut self, new_mixer: bool) {
+        if let Some(mut noise) = self.noise.clone() {
+            if new_mixer || self.noise_sound.is_none() {
+                // the mixer was recreated or noise has never started
+                if !self.conf.play_noise {
+                    noise.set_playback_rate(PlaybackRate::Factor(0.0));
+                }
+
+                // update noise speed and play the sound
+                noise.set_volume(self.conf.noise_volume);
+                noise.set_loop_enabled(true);
+                noise.set_loop_index(0..=noise.frames.len().saturating_sub(1));
+                self.noise_sound = Some(self.mixer.play(noise));
+            } else if let Some(noise_sound) = &self.noise_sound {
+                // noise is already playing, mixer has not been recreated
+                noise.set_volume(self.conf.noise_volume);
+                noise_sound.set_playback_rate(PlaybackRate::Factor(if self.conf.play_noise {
+                    1.0
+                } else {
+                    0.0
+                }));
+            }
+        }
+    }
+
+    fn open_noise_toggle_toast(&self, toasts: &mut Toasts) {
+        toasts.add(Toast {
+            kind: ToastKind::Info,
+            text: if self.conf.play_noise {
+                "Playing noise".into()
+            } else {
+                "Stopped playing noise".into()
+            },
+            options: ToastOptions::default().duration_in_seconds(2.0),
+        });
+    }
+
+    fn show_audio_window(&mut self, ui: &mut egui::Ui, toasts: &mut Toasts) {
+        ui.add_enabled_ui(self.noise.is_some() && !self.is_loading_clickpack, |ui| {
+            ui.horizontal(|ui| {
+                if ui
+                    .checkbox(&mut self.conf.play_noise, "Play noise")
+                    .on_disabled_hover_text("Your clickpack doesn't have a noise file")
+                    .on_hover_text("Play the noise file")
+                    .changed()
+                {
+                    self.play_noise(false);
+                    self.open_noise_toggle_toast(toasts);
+                }
+
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut self.conf.noise_volume)
+                            .speed(0.01)
+                            .clamp_range(0.0..=f32::INFINITY),
+                    )
+                    .changed()
+                {
+                    if let Some(noise_sound) = &self.noise_sound {
+                        noise_sound.set_volume(self.conf.noise_volume);
+                    }
+                }
+                ui.label("Noise volume");
+            });
+        });
+
         #[cfg(feature = "special")]
         ui.horizontal(|ui| {
             egui::ComboBox::from_label("Output device")
@@ -615,6 +955,12 @@ impl Bot {
                             self.mixer = Mixer::new();
                             self.mixer
                                 .init_ex(Device::Name(device.clone()), StreamSettings::default());
+                            self.play_noise(true);
+                            toasts.add(Toast {
+                                kind: ToastKind::Success,
+                                text: format!("Switched device to \"{device}\"").into(),
+                                options: ToastOptions::default().duration_in_seconds(3.0),
+                            });
                         }
                     }
                 });
@@ -626,8 +972,14 @@ impl Bot {
                 self.mixer = Mixer::new();
                 self.mixer.init();
                 if let Ok(name) = Device::Default.name() {
-                    self.selected_device = name;
+                    self.selected_device = name.clone();
+                    toasts.add(Toast {
+                        kind: ToastKind::Success,
+                        text: format!("Switched device to \"{name}\"").into(),
+                        options: ToastOptions::default().duration_in_seconds(3.0),
+                    });
                 }
+                self.play_noise(true);
                 log::debug!("reset audio device");
             }
         });
@@ -680,23 +1032,157 @@ impl Bot {
 
         ui.collapsing("Volume settings", |ui| {
             let vol = &mut self.conf.volume_settings;
-            help_text(ui, "Constant volume multiplier for all sounds", |ui| {
-                ui.horizontal(|ui| {
-                    let dragged = ui
-                        .add(
-                            egui::DragValue::new(&mut vol.global_volume)
-                                .clamp_range(0.0..=f64::INFINITY)
-                                .speed(0.01),
-                        )
-                        .dragged();
-                    let mut text = RichText::new("Global volume");
-                    if dragged && vol.global_volume == 0.0 {
-                        text = text.color(Color32::LIGHT_RED);
-                    }
-                    ui.label(text);
+            let fields = [
+                (
+                    "Constant volume multiplier for all sounds",
+                    &mut vol.global_volume,
+                    "Global volume",
+                ),
+                (
+                    "Random volume variation (+/-)",
+                    &mut vol.volume_var,
+                    "Volume variation",
+                ),
+                (
+                    "Time between clicks which are considered spam clicks",
+                    &mut vol.spam_time,
+                    "Spam time",
+                ),
+                (
+                    "The value which the volume offset factor is multiplied by",
+                    &mut vol.spam_vol_offset_factor,
+                    "Spam volume offset factor",
+                ),
+                (
+                    "The maximum value of the volume offset",
+                    &mut vol.max_spam_vol_offset,
+                    "Maximum volume offset",
+                ),
+            ];
+            for field in fields {
+                help_text(ui, field.0, |ui| {
+                    ui.horizontal(|ui| {
+                        let dragged = ui
+                            .add(
+                                egui::DragValue::new(field.1)
+                                    .clamp_range(0.0..=f64::INFINITY)
+                                    .speed(0.01),
+                            )
+                            .dragged();
+                        let mut text = RichText::new(field.2);
+                        if dragged && *field.1 == 0.0 {
+                            text = text.color(Color32::LIGHT_RED);
+                        }
+                        ui.label(text);
+                    });
                 });
-            });
+            }
         });
+
+        ui.collapsing("Spam volume changes", |ui| {
+            ui.label("This can be used to lower volume in spams");
+            let vol = &mut self.conf.volume_settings;
+            let fields = [
+                (
+                    "Time between clicks which are considered spam clicks",
+                    &mut vol.spam_time,
+                    "Spam time",
+                    true,
+                ),
+                (
+                    "The value which the volume offset factor is multiplied by",
+                    &mut vol.spam_vol_offset_factor,
+                    "Spam volume offset factor",
+                    false,
+                ),
+                (
+                    "The maximum value of the volume offset",
+                    &mut vol.max_spam_vol_offset,
+                    "Maximum volume offset",
+                    false,
+                ),
+            ];
+            for field in fields {
+                help_text(ui, field.0, |ui| {
+                    ui.horizontal(|ui| {
+                        let dragged = ui
+                            .add(
+                                egui::DragValue::new(field.1)
+                                    .clamp_range(if field.3 {
+                                        0.0..=f64::INFINITY
+                                    } else {
+                                        f64::NEG_INFINITY..=f64::INFINITY
+                                    })
+                                    .speed(0.01),
+                            )
+                            .dragged();
+                        let mut text = RichText::new(field.2);
+                        if dragged && *field.1 == 0.0 {
+                            text = text.color(Color32::LIGHT_RED);
+                        }
+                        ui.label(text);
+                    });
+                });
+            }
+        });
+
+        ui.collapsing("Advanced", |ui| {
+            let prev_bufsize = self.conf.buffer_size;
+            help_text(
+                ui,
+                "Audio buffer size in samples.\nLower value means lower latency",
+                |ui| {
+                    ui.horizontal(|ui| {
+                        if u32_edit_field_min1(ui, &mut self.conf.buffer_size).changed() {
+                            self.buffer_size_changed = prev_bufsize != self.conf.buffer_size;
+                        }
+                        ui.label("Buffer size");
+                    });
+                },
+            );
+
+            if self.buffer_size_changed {
+                ui.horizontal(|ui| {
+                    if ui
+                        .button("Apply")
+                        .on_hover_text("Apply buffer size changes")
+                        .clicked()
+                    {
+                        let device = self.get_device();
+                        self.mixer = Mixer::new();
+                        self.mixer.init_ex(
+                            device,
+                            StreamSettings {
+                                buffer_size: Some(self.conf.buffer_size),
+                                ..Default::default()
+                            },
+                        );
+                        self.buffer_size_changed = false;
+                        self.play_noise(true);
+                    }
+
+                    if self.conf.buffer_size > 300_000 {
+                        ui.label(
+                            RichText::new("WARN: Using a high buffer size might cause instability")
+                                .color(Color32::YELLOW),
+                        );
+                    }
+                });
+            }
+        });
+    }
+
+    fn apply_config(&mut self, prev_bufsize: u32) {
+        if prev_bufsize != self.conf.buffer_size {
+            let device = self.get_device();
+            self.mixer.init_ex(
+                device,
+                StreamSettings {
+                    buffer_size: Some(self.conf.buffer_size),
+                    ..Default::default()
+                },
+            );
+        }
     }
 
     fn show_clickpack_window(&mut self, ui: &mut egui::Ui, modal: Arc<Mutex<Modal>>) {
@@ -767,8 +1253,38 @@ impl Bot {
         ui.separator();
 
         let dur = Duration::from_secs_f64(self.prev_time);
+        let ago = self
+            .playlayer
+            .to_option()
+            .map(|playlayer| playlayer.time() - dur.as_secs_f64());
         help_text(ui, &format!("{dur:?} since the start of the level"), |ui| {
-            ui.label(format!("Last action time: {dur:.2?}"));
+            if let Some(ago) = ago {
+                ui.label(format!("Last action time: {dur:.2?} ({ago:.2}s ago)"));
+            } else {
+                ui.label(format!("Last action time: {dur:.2?}"));
+            }
         });
+        if self.prev_resolved_click_type != ClickType::None {
+            ui.label(format!(
+                "Last click type: {:?} (resolved to {:?})",
+                self.prev_click_type, self.prev_resolved_click_type
+            ));
+        } else {
+            ui.label(format!("Last click type: {:?}", self.prev_click_type));
+        }
+        ui.label(format!(
+            "Last pitch: {:.4} ({} => {})",
+            self.prev_pitch, self.conf.pitch.from, self.conf.pitch.to
+        ));
+        ui.label(format!(
+            "Last volume: {:.4} (+/- {} * {})",
+            self.prev_volume,
+            self.conf.volume_settings.volume_var,
+            self.conf.volume_settings.global_volume
+        ));
+        ui.label(format!(
+            "Last spam volume offset: {:.4}",
+            self.prev_spam_offset
+        ));
     }
 }
