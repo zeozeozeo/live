@@ -454,6 +454,8 @@ pub struct Bot {
     pub noise_sound: Option<SoundHandle>,
     pub show_alternate_hook_warning: bool,
     pub did_reset_config: bool,
+    pub clickpacks: Vec<PathBuf>,
+    pub last_clickpack_reload: Instant,
 }
 
 impl Default for Bot {
@@ -482,6 +484,8 @@ impl Default for Bot {
             noise_sound: None,
             show_alternate_hook_warning: false,
             did_reset_config: false,
+            clickpacks: vec![],
+            last_clickpack_reload: Instant::now(),
         }
     }
 }
@@ -518,8 +522,8 @@ fn u32_edit_field_min1(ui: &mut egui::Ui, value: &mut u32) -> egui::Response {
 }
 
 impl Bot {
-    pub fn load_clickpack(&mut self, clickpack_dir: &Path) -> Result<()> {
-        // reset current clickpack
+    fn unload_clickpack(&mut self) {
+        log::debug!("unloading clickpack");
         self.num_sounds = (0, 0);
         self.players = (Sounds::default(), Sounds::default());
         self.noise = None;
@@ -528,6 +532,12 @@ impl Bot {
             noise_sound.set_loop_enabled(false);
             noise_sound.set_playback_rate(PlaybackRate::Factor(0.0));
         }
+        self.selected_clickpack.clear();
+    }
+
+    pub fn load_clickpack(&mut self, clickpack_dir: &Path) -> Result<()> {
+        // reset current clickpack
+        self.unload_clickpack();
 
         for player_dirnames in PLAYER_DIRNAMES {
             let mut player1_path = clickpack_dir.to_path_buf();
@@ -637,6 +647,11 @@ impl Bot {
             },
         );
 
+        // reload clickpacks
+        let _ = self
+            .reload_clickpacks()
+            .map_err(|e| log::error!("failed to reload clickpacks: {e}"));
+
         // init game hooks
         log::debug!("initializing hooks");
         unsafe { hooks::init_hooks() };
@@ -738,6 +753,21 @@ impl Bot {
         });
     }
 
+    fn reload_clickpacks(&mut self) -> Result<()> {
+        let path = Path::new(".zcb/clickpacks");
+        std::fs::create_dir_all(path)?;
+        let dir = path.read_dir()?;
+        self.clickpacks.clear();
+        for entry in dir {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                self.clickpacks.push(path);
+            }
+        }
+        Ok(())
+    }
+
     pub fn draw_ui(&mut self, ctx: &egui::Context) {
         // process hotkeys
         let wants_keyboard = ctx.wants_keyboard_input();
@@ -764,19 +794,26 @@ impl Bot {
             self.play_noise(false);
         }
 
+        // auto-save config
+        if self.last_conf_save.elapsed() > Duration::from_secs(3) {
+            if self.conf != self.prev_conf && !self.did_reset_config {
+                self.conf.save();
+                self.last_conf_save = Instant::now();
+                self.prev_conf = self.conf.clone();
+            }
+        }
+
         // don't draw/autosave if not open
         if self.conf.hidden {
             return;
         }
 
-        // auto-save config
-        if self.last_conf_save.elapsed() > Duration::from_secs(3)
-            && self.conf != self.prev_conf
-            && !self.did_reset_config
-        {
-            self.conf.save();
-            self.last_conf_save = Instant::now();
-            self.prev_conf = self.conf.clone();
+        // clickpack reloading
+        if self.last_clickpack_reload.elapsed() > Duration::from_secs(3) {
+            let _ = self
+                .reload_clickpacks()
+                .map_err(|e| log::error!("failed to reload clickpacks: {e}"));
+            self.last_clickpack_reload = Instant::now();
         }
 
         // draw overlay
@@ -1329,6 +1366,72 @@ impl Bot {
         }
     }
 
+    fn load_clickpack_thread(modal: Arc<Mutex<Modal>>, dir: &Path) {
+        unsafe { BOT.is_loading_clickpack = true };
+        if let Err(e) = unsafe { BOT.load_clickpack(&dir) } {
+            log::error!("failed to load clickpack: {e}");
+            modal
+                .lock()
+                .unwrap()
+                .dialog()
+                .with_title("Failed to load clickpack!")
+                .with_body(utils::capitalize_first_letter(&e.to_string()))
+                .with_icon(Icon::Error)
+                .open();
+        }
+        unsafe { BOT.is_loading_clickpack = false };
+    }
+
+    fn select_clickpack_combobox(&mut self, ui: &mut egui::Ui, modal: Arc<Mutex<Modal>>) {
+        egui::ComboBox::from_label("Select clickpack")
+            .selected_text(&self.selected_clickpack)
+            .show_ui(ui, |ui| {
+                for path in &self.clickpacks {
+                    let dirname = path.file_name().unwrap().to_str().unwrap();
+                    if ui
+                        .selectable_label(self.selected_clickpack == dirname, dirname)
+                        .clicked()
+                    {
+                        let modal_moved = modal.clone();
+                        let path = path.clone();
+                        std::thread::spawn(move || {
+                            Self::load_clickpack_thread(modal_moved, &path);
+                        });
+                    }
+                }
+            });
+    }
+
+    fn select_clickpack_button(&mut self, ui: &mut egui::Ui, modal: Arc<Mutex<Modal>>) {
+        if !self.clickpacks.is_empty() {
+            self.select_clickpack_combobox(ui, modal);
+            return;
+        }
+        ui.horizontal(|ui| {
+            if ui
+                .button("Select clickpack")
+                .on_disabled_hover_text("Please wait...")
+                .clicked()
+            {
+                std::thread::spawn(move || {
+                    let Some(dir) = FileDialog::new().pick_folder() else {
+                        return;
+                    };
+                    log::debug!("selected clickpack {:?}", dir);
+                    Self::load_clickpack_thread(modal, &dir);
+                });
+            }
+            if self.num_sounds != (0, 0) {
+                ui.label(format!(
+                    "Selected clickpack: \"{}\"",
+                    self.selected_clickpack
+                ));
+            } else {
+                ui.label("...or put clickpacks in .zcb/clickpacks");
+            }
+        });
+    }
+
     fn show_clickpack_window(&mut self, ui: &mut egui::Ui, modal: Arc<Mutex<Modal>>) {
         if self.is_loading_clickpack {
             ui.horizontal(|ui| {
@@ -1337,43 +1440,18 @@ impl Bot {
             });
         }
         let has_sounds = self.num_sounds != (0, 0);
+
         ui.add_enabled_ui(!self.is_loading_clickpack, |ui| {
             ui.horizontal(|ui| {
-                if ui
-                    .button("Select clickpack")
-                    .on_disabled_hover_text("Please wait...")
-                    .clicked()
-                {
-                    std::thread::spawn(move || {
-                        let Some(dir) = FileDialog::new().pick_folder() else {
-                            return;
-                        };
-                        log::debug!("selected clickpack {:?}", dir);
-
-                        // load clickpack on this thread
-                        unsafe { BOT.is_loading_clickpack = true };
-                        if let Err(e) = unsafe { BOT.load_clickpack(&dir) } {
-                            log::error!("failed to load clickpack: {e}");
-                            modal
-                                .lock()
-                                .unwrap()
-                                .dialog()
-                                .with_title("Failed to load clickpack!")
-                                .with_body(utils::capitalize_first_letter(&e.to_string()))
-                                .with_icon(Icon::Error)
-                                .open();
-                        }
-                        unsafe { BOT.is_loading_clickpack = false };
-                    });
-                }
-                if has_sounds {
-                    ui.label(format!(
-                        "Selected clickpack: \"{}\"",
-                        self.selected_clickpack
-                    ));
+                self.select_clickpack_button(ui, modal);
+                if !self.selected_clickpack.is_empty() {
+                    if ui.button("🗙").on_hover_text("Unload clickpack").clicked() {
+                        self.unload_clickpack();
+                    }
                 }
             });
         });
+
         if has_sounds {
             help_text(
                 ui,
