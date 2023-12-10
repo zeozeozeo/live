@@ -538,8 +538,6 @@ dependencies = [
 [[package]]
 name = "geometrydash"
 version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac673ec75be34eaaff83c8c0007c8e7913b79fc263df902e55a6dd04db015d97"
 dependencies = [
  "bindgen",
  "windows 0.52.0",

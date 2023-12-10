@@ -16,6 +16,8 @@ type FnInit = unsafe extern "fastcall" fn(PlayLayer, Ptr, Ptr) -> bool;
 /// called when exiting from a level.
 type FnQuit = unsafe extern "fastcall" fn(PlayLayer, Ptr);
 
+type FnReset = unsafe extern "fastcall" fn(PlayLayer, Ptr);
+
 static_detour! {
     static PushButton: unsafe extern "fastcall" fn(PlayerObject, Ptr, i32) -> bool;
     static ReleaseButton: unsafe extern "fastcall" fn(PlayerObject, Ptr, i32) -> bool;
@@ -23,6 +25,8 @@ static_detour! {
     static ReleaseButton2: unsafe extern "fastcall" fn(PlayLayer, Ptr, i32, bool) -> u32;
     static Init: unsafe extern "fastcall" fn(PlayLayer, Ptr, Ptr) -> bool;
     static Quit: unsafe extern "fastcall" fn(PlayLayer, Ptr);
+    static Reset: unsafe extern "fastcall" fn(PlayLayer, Ptr);
+
 }
 
 fn push_button(player: PlayerObject, _edx: Ptr, button: i32) -> bool {
@@ -81,6 +85,11 @@ fn quit(playlayer: PlayLayer, _edx: Ptr) {
 
     // set playlayer to null
     unsafe { BOT.playlayer = PlayLayer::from_address(0) };
+}
+
+fn reset(playlayer: PlayLayer, _edx: Ptr) {
+    unsafe { Reset.call(playlayer, 0) };
+    unsafe { BOT.onreset() };
 }
 
 macro_rules! patch {
@@ -164,19 +173,34 @@ pub unsafe fn init_hooks() {
     // quit
     let quit_fn: FnQuit = transmute(get_base() + 0x20D810);
     Quit.initialize(quit_fn, quit).expect("failed to hook Quit");
-    Quit.enable().expect("failed to enable Quit hook")
+    Quit.enable().expect("failed to enable Quit hook");
+
+    // reset
+    let reset_fn: FnReset = transmute(get_base() + 0x20BF00);
+    Reset
+        .initialize(reset_fn, reset)
+        .expect("failed to hook Reset");
+    Reset.enable().expect("failed to enable Reset hook");
 }
 
 pub unsafe fn disable_hooks() {
     log::debug!("disabling hooks");
-    let _ = unsafe { PushButton.disable() }
-        .map_err(|e| log::error!("failed to disable PushButton hook: {e}"));
-    let _ = unsafe { ReleaseButton.disable() }
-        .map_err(|e| log::error!("failed to disable ReleaseButton hook: {e}"));
-    let _ = unsafe { PushButton2.disable() }
-        .map_err(|e| log::error!("failed to disable PushButton2 hook: {e}"));
-    let _ = unsafe { ReleaseButton2.disable() }
-        .map_err(|e| log::error!("failed to disable ReleaseButton2 hook: {e}"));
+    let alternate = unsafe { BOT.used_alternate_hook };
+
+    if !alternate {
+        let _ = unsafe { PushButton.disable() }
+            .map_err(|e| log::error!("failed to disable PushButton hook: {e}"));
+        let _ = unsafe { ReleaseButton.disable() }
+            .map_err(|e| log::error!("failed to disable ReleaseButton hook: {e}"));
+    } else {
+        let _ = unsafe { PushButton2.disable() }
+            .map_err(|e| log::error!("failed to disable PushButton2 hook: {e}"));
+        let _ = unsafe { ReleaseButton2.disable() }
+            .map_err(|e| log::error!("failed to disable ReleaseButton2 hook: {e}"));
+    }
+
     let _ = unsafe { Init.disable() }.map_err(|e| log::error!("failed to disable Init hook: {e}"));
     let _ = unsafe { Quit.disable() }.map_err(|e| log::error!("failed to disable Quit hook: {e}"));
+    let _ =
+        unsafe { Reset.disable() }.map_err(|e| log::error!("failed to disable Reset hook: {e}"));
 }

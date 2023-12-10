@@ -4,13 +4,20 @@ use egui::{pos2, vec2, Align2, Color32, Direction, Key, KeyboardShortcut, Modifi
 use egui_keybind::{Bind, Keybind, Shortcut};
 use egui_modal::{Icon, Modal};
 use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
-use geometrydash::{AddressUtils, PlayLayer, PlayerObject};
+use geometrydash::{
+    fmod::{
+        FMOD_System_CreateSound, FMOD_CREATESOUNDEXINFO, FMOD_DEFAULT, FMOD_SOUND,
+        FMOD_SOUND_FORMAT_PCMFLOAT, FMOD_SYSTEM,
+    },
+    AddressUtils, FMODAudioEngine, PlayLayer, PlayerObject,
+};
 use kittyaudio::{Device, Mixer, PlaybackRate, Sound, SoundHandle, StreamSettings};
 use once_cell::sync::Lazy;
 use rand::{prelude::SliceRandom, Rng};
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use std::{
+    ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     process::Command,
     sync::{Arc, Mutex, Once},
@@ -153,19 +160,73 @@ impl ClickType {
     }
 }
 
-#[derive(Default)]
-pub struct Sounds {
-    pub hardclicks: Vec<Sound>,
-    pub hardreleases: Vec<Sound>,
-    pub clicks: Vec<Sound>,
-    pub releases: Vec<Sound>,
-    pub softclicks: Vec<Sound>,
-    pub softreleases: Vec<Sound>,
-    pub microclicks: Vec<Sound>,
-    pub microreleases: Vec<Sound>,
+#[inline]
+fn fmod_system() -> *mut FMOD_SYSTEM {
+    FMODAudioEngine::shared().system()
 }
 
-fn read_clicks_in_directory(dir: &Path) -> Vec<Sound> {
+#[derive(Clone)]
+pub struct SoundWrapper {
+    sound: Sound,
+    fmod_sound: *mut FMOD_SOUND,
+}
+
+impl SoundWrapper {
+    pub fn from_sound(sound: Sound) -> Self {
+        use std::mem::size_of;
+        let mut exinfo: FMOD_CREATESOUNDEXINFO = unsafe { std::mem::zeroed() };
+        exinfo.cbsize = size_of::<FMOD_CREATESOUNDEXINFO>() as i32;
+        exinfo.numchannels = 2;
+        exinfo.format = FMOD_SOUND_FORMAT_PCMFLOAT;
+        exinfo.defaultfrequency = sound.sample_rate() as i32;
+        // 2 channels, f32 sound
+        exinfo.length = sound.frames.len() as u32 * size_of::<f32>() as u32 * 2;
+
+        let mut fmod_sound: *mut FMOD_SOUND = std::ptr::null_mut();
+        unsafe {
+            if FMOD_System_CreateSound(
+                fmod_system(),
+                sound.frames.as_ptr() as *const i8,
+                FMOD_DEFAULT,
+                &mut exinfo,
+                &mut fmod_sound,
+            ) != 0
+            {
+                log::error!("failed to create fmod sound!");
+            }
+        };
+
+        Self { sound, fmod_sound }
+    }
+}
+
+impl Deref for SoundWrapper {
+    type Target = Sound;
+
+    fn deref(&self) -> &Self::Target {
+        &self.sound
+    }
+}
+
+impl DerefMut for SoundWrapper {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.sound
+    }
+}
+
+#[derive(Default)]
+pub struct Sounds {
+    pub hardclicks: Vec<SoundWrapper>,
+    pub hardreleases: Vec<SoundWrapper>,
+    pub clicks: Vec<SoundWrapper>,
+    pub releases: Vec<SoundWrapper>,
+    pub softclicks: Vec<SoundWrapper>,
+    pub softreleases: Vec<SoundWrapper>,
+    pub microclicks: Vec<SoundWrapper>,
+    pub microreleases: Vec<SoundWrapper>,
+}
+
+fn read_clicks_in_directory(dir: &Path) -> Vec<SoundWrapper> {
     let Ok(dir) = dir.read_dir() else {
         log::warn!("can't find directory {dir:?}, skipping");
         return vec![];
@@ -174,7 +235,7 @@ fn read_clicks_in_directory(dir: &Path) -> Vec<Sound> {
     for entry in dir {
         let path = entry.unwrap().path();
         if path.is_file() {
-            let sound = Sound::from_path(path.clone());
+            let sound = Sound::from_path(path.clone()).map(|s| SoundWrapper::from_sound(s));
             if let Ok(sound) = sound {
                 sounds.push(sound);
             } else if let Err(e) = sound {
@@ -254,7 +315,7 @@ impl Sounds {
         self.num_sounds() > 0
     }
 
-    pub fn random_sound(&self, typ: ClickType) -> Option<(Sound, ClickType)> {
+    pub fn random_sound(&self, typ: ClickType) -> Option<(SoundWrapper, ClickType)> {
         let thread_rng = &mut rand::thread_rng();
         for typ in typ.preferred() {
             let sound = match typ {
@@ -366,6 +427,8 @@ pub struct Config {
     pub stage: Stage,
     #[serde(default = "bool::default")]
     pub use_fmod: bool,
+    #[serde(default = "bool::default")]
+    pub use_playlayer_time: bool,
 }
 
 impl Config {
@@ -393,6 +456,7 @@ impl Default for Config {
             show_console: false,
             stage: Stage::default(),
             use_fmod: false,
+            use_playlayer_time: false,
         }
     }
 }
@@ -460,11 +524,14 @@ pub struct Bot {
     pub did_reset_config: bool,
     pub clickpacks: Vec<PathBuf>,
     pub last_clickpack_reload: Instant,
+    pub level_start: Instant,
+    pub used_alternate_hook: bool,
 }
 
 impl Default for Bot {
     fn default() -> Self {
         let conf = Config::load().unwrap_or_default().fixup();
+        let use_alternate_hook = conf.use_alternate_hook;
         Self {
             conf: conf.clone(),
             players: (Sounds::default(), Sounds::default()),
@@ -490,6 +557,8 @@ impl Default for Bot {
             did_reset_config: false,
             clickpacks: vec![],
             last_clickpack_reload: Instant::now(),
+            level_start: Instant::now(),
+            used_alternate_hook: use_alternate_hook,
         }
     }
 }
@@ -603,7 +672,7 @@ impl Bot {
         self.players.0.has_sounds() || self.players.1.has_sounds()
     }
 
-    fn get_random_click(&self, typ: ClickType, player2: bool) -> (Sound, ClickType) {
+    fn get_random_click(&self, typ: ClickType, player2: bool) -> (SoundWrapper, ClickType) {
         if player2 {
             self.players
                 .1
@@ -617,10 +686,24 @@ impl Bot {
         }
     }
 
-    pub fn init(&mut self) {
-        // if the config specifies a custom device, try to find it
+    fn maybe_init_kittyaudio(&mut self) {
+        if self.conf.use_fmod {
+            return;
+        }
+        log::debug!("starting kittyaudio playback thread");
+        self.mixer = Mixer::new();
         let device = self.get_device();
 
+        self.mixer.init_ex(
+            device,
+            StreamSettings {
+                buffer_size: Some(self.conf.buffer_size),
+                ..Default::default()
+            },
+        );
+    }
+
+    pub fn init(&mut self) {
         // update thread
         #[cfg(feature = "special")]
         {
@@ -628,6 +711,9 @@ impl Bot {
             std::thread::spawn(move || {
                 let mut prev_devices = vec![];
                 loop {
+                    if unsafe { BOT.conf.use_fmod } {
+                        continue;
+                    }
                     if let Ok(devices) = kittyaudio::device_names() {
                         // only lock when device lists do not match
                         if devices != prev_devices {
@@ -636,20 +722,13 @@ impl Bot {
                             prev_devices = devices;
                         }
                     }
-                    std::thread::sleep(Duration::from_secs(2));
+                    std::thread::sleep(Duration::from_secs(4));
                 }
             });
         }
 
         // init audio playback
-        log::debug!("starting kittyaudio playback thread");
-        self.mixer.init_ex(
-            device,
-            StreamSettings {
-                buffer_size: Some(self.conf.buffer_size),
-                ..Default::default()
-            },
-        );
+        self.maybe_init_kittyaudio();
 
         // reload clickpacks
         let _ = self
@@ -693,8 +772,8 @@ impl Bot {
             return;
         }
 
-        let now = self.playlayer.time();
-        let dt = (now - self.prev_time) as f32;
+        let now = self.time();
+        let dt = (now - self.prev_time).abs() as f32;
         let click_type = ClickType::from_time(push, dt, &self.conf.timings);
 
         // get click
@@ -729,7 +808,7 @@ impl Bot {
             self.prev_volume = volume;
         }
 
-        self.mixer.play(click);
+        self.mixer.play(click.sound);
         self.prev_time = now;
         self.prev_click_type = click_type;
         self.prev_resolved_click_type = resolved_click_type;
@@ -743,6 +822,22 @@ impl Bot {
         self.prev_pitch = 0.0;
         self.prev_volume = self.conf.volume_settings.global_volume;
         self.prev_spam_offset = 0.0;
+        self.level_start = Instant::now();
+    }
+
+    pub fn onreset(&mut self) {
+        self.level_start = Instant::now();
+    }
+
+    #[inline]
+    fn time(&self) -> f64 {
+        if self.conf.use_playlayer_time {
+            self.playlayer
+                .to_option()
+                .map_or_else(|| self.level_start.elapsed().as_secs_f64(), |p| p.time())
+        } else {
+            self.level_start.elapsed().as_secs_f64()
+        }
     }
 
     fn open_clickbot_toggle_toast(&self, toasts: &mut Toasts) {
@@ -938,6 +1033,11 @@ impl Bot {
                     }
                 }
             });
+            help_text(
+                ui,
+                "Synchronize actions with the timestep of the game",
+                |ui| ui.checkbox(&mut self.conf.use_playlayer_time, "Use PlayLayer time"),
+            );
 
             ui.horizontal(|ui| {
                 ui.style_mut().spacing.item_spacing.x = 4.0;
@@ -1087,9 +1187,7 @@ impl Bot {
                         {
                             // start a new mixer on new device
                             log::info!("switching audio device to \"{device}\"");
-                            self.mixer = Mixer::new();
-                            self.mixer
-                                .init_ex(Device::Name(device.clone()), StreamSettings::default());
+                            self.maybe_init_kittyaudio();
                             self.play_noise(true);
                             toasts.add(Toast {
                                 kind: ToastKind::Success,
@@ -1355,15 +1453,7 @@ impl Bot {
                         .on_hover_text("Apply buffer size changes")
                         .clicked()
                     {
-                        let device = self.get_device();
-                        self.mixer = Mixer::new();
-                        self.mixer.init_ex(
-                            device,
-                            StreamSettings {
-                                buffer_size: Some(self.conf.buffer_size),
-                                ..Default::default()
-                            },
-                        );
+                        self.maybe_init_kittyaudio();
                         self.buffer_size_changed = false;
                         self.play_noise(true);
                     }
@@ -1383,14 +1473,7 @@ impl Bot {
 
     fn apply_config(&mut self, prev_bufsize: u32) {
         if prev_bufsize != self.conf.buffer_size {
-            let device = self.get_device();
-            self.mixer.init_ex(
-                device,
-                StreamSettings {
-                    buffer_size: Some(self.conf.buffer_size),
-                    ..Default::default()
-                },
-            );
+            self.maybe_init_kittyaudio();
         }
     }
 
@@ -1514,16 +1597,9 @@ impl Bot {
             ui.separator();
             ui.collapsing("Debug", |ui| {
                 let dur = Duration::from_secs_f64(self.prev_time);
-                let ago = self
-                    .playlayer
-                    .to_option()
-                    .map(|playlayer| playlayer.time() - dur.as_secs_f64());
+                let ago = self.time() - dur.as_secs_f64();
                 help_text(ui, &format!("{dur:?} since the start of the level"), |ui| {
-                    if let Some(ago) = ago {
-                        ui.label(format!("Last action time: {dur:.2?} ({ago:.2}s ago)"));
-                    } else {
-                        ui.label(format!("Last action time: {dur:.2?}"));
-                    }
+                    ui.label(format!("Last action time: {dur:.2?} ({ago:.2}s ago)"));
                 });
                 if self.prev_resolved_click_type != ClickType::None {
                     ui.label(format!(
