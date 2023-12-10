@@ -132,11 +132,10 @@ unsafe extern "system" fn zcblive_main(_dll: *mut c_void) -> u32 {
 
     // set wndproc
     O_WNDPROC = Some(SetWindowLongPtrA(hwnd, GWLP_WNDPROC, h_wndproc as _));
-
-    // start bot
-    // bot().run();
     0
 }
+
+// functions for other mods to call if they need it for some reason
 
 #[no_mangle]
 #[inline(never)]
