@@ -437,6 +437,7 @@ pub struct Bot {
     pub buffer_size_changed: bool,
     pub noise_sound: Option<SoundHandle>,
     pub show_alternate_hook_warning: bool,
+    pub did_reset_config: bool,
 }
 
 impl Default for Bot {
@@ -464,6 +465,7 @@ impl Default for Bot {
             buffer_size_changed: false,
             noise_sound: None,
             show_alternate_hook_warning: false,
+            did_reset_config: false,
         }
     }
 }
@@ -746,7 +748,10 @@ impl Bot {
         }
 
         // auto-save config
-        if self.last_conf_save.elapsed() > Duration::from_secs(3) && self.conf != self.prev_conf {
+        if self.last_conf_save.elapsed() > Duration::from_secs(3)
+            && self.conf != self.prev_conf
+            && !self.did_reset_config
+        {
             self.conf.save();
             self.last_conf_save = Instant::now();
             self.prev_conf = self.conf.clone();
@@ -842,15 +847,24 @@ impl Bot {
                 ui.style_mut().spacing.item_spacing.x = 4.0;
                 if ui
                     .button("Save")
-                    .on_hover_text("Save the current configuration.\nThis happens automatically!")
+                    .on_hover_text(
+                        "Save the current configuration.\n\
+                        This happens automatically, unless you reset your config!",
+                    )
                     .clicked()
                 {
                     self.conf.save();
+                    self.did_reset_config = false;
+                    self.prev_conf = self.conf.clone();
                     toasts.add(Toast {
                         kind: ToastKind::Success,
                         text: "Saved configuration to .zcb/config.json".into(),
                         options: ToastOptions::default().duration_in_seconds(2.0),
                     });
+                }
+                if self.conf != self.prev_conf {
+                    ui.style_mut().spacing.item_spacing.x = 4.0;
+                    ui.label("(!)");
                 }
                 ui.style_mut().spacing.item_spacing.x = 4.0;
                 if ui
@@ -886,6 +900,7 @@ impl Bot {
                 {
                     let prev_bufsize = self.conf.buffer_size;
                     self.conf = Config::default();
+                    self.did_reset_config = true;
                     self.apply_config(prev_bufsize);
                     toasts.add(Toast {
                         kind: ToastKind::Info,
