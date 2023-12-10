@@ -9,7 +9,6 @@ use windows::Win32::{
     Foundation::{BOOL, HWND, LPARAM, LRESULT, TRUE, WPARAM},
     Graphics::Gdi::{WindowFromDC, HDC},
     System::{
-        Console::AllocConsole,
         LibraryLoader::{GetModuleHandleA, GetProcAddress},
         SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH},
         Threading::{CreateThread, THREAD_CREATION_FLAGS},
@@ -29,6 +28,7 @@ type FnWglSwapBuffers = unsafe extern "system" fn(HDC) -> i32;
 static mut O_WNDPROC: Option<i32> = None;
 
 /// WNDPROC hook
+#[no_mangle]
 unsafe extern "system" fn h_wndproc(
     hwnd: HWND,
     umsg: u32,
@@ -76,6 +76,7 @@ pub unsafe extern "system" fn DllMain(dll: u32, reason: u32, _reserved: *mut c_v
 }
 
 /// Main function
+#[no_mangle]
 unsafe extern "system" fn zcblive_main(_dll: *mut c_void) -> u32 {
     // wait for enter key on panics
     let panic_hook = std::panic::take_hook();
@@ -86,10 +87,7 @@ unsafe extern "system" fn zcblive_main(_dll: *mut c_void) -> u32 {
         std::process::exit(1);
     }));
 
-    AllocConsole().unwrap();
-    simple_logger::SimpleLogger::new()
-        .init()
-        .expect("failed to initialize simple_logger");
+    BOT.maybe_alloc_console();
 
     // get swapbuffers function
     let opengl = GetModuleHandleA(windows::core::s!("OPENGL32.dll")).unwrap();
@@ -138,4 +136,16 @@ unsafe extern "system" fn zcblive_main(_dll: *mut c_void) -> u32 {
     // start bot
     // bot().run();
     0
+}
+
+#[no_mangle]
+#[inline(never)]
+unsafe extern "system" fn zcblive_action_callback(push: bool, player2: bool) {
+    BOT.on_action(push, player2)
+}
+
+#[no_mangle]
+#[inline(never)]
+unsafe extern "system" fn zcblive_set_playlayer(playlayer: geometrydash::PlayLayer) {
+    BOT.playlayer = playlayer;
 }

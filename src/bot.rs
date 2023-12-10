@@ -12,9 +12,10 @@ use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Once},
     time::{Duration, Instant},
 };
+use windows::Win32::System::Console::{AllocConsole, FreeConsole};
 
 /// Global bot state
 pub static mut BOT: Lazy<Box<Bot>> = Lazy::new(|| Box::new(Bot::default()));
@@ -327,6 +328,15 @@ fn f32_one() -> f32 {
     1.0
 }
 
+// clickpack, options, audio
+#[derive(Serialize, Deserialize, Clone, PartialEq, Default)]
+pub enum Stage {
+    #[default]
+    Clickpack,
+    Audio,
+    Options,
+}
+
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct Config {
     pub pitch_enabled: bool,
@@ -349,6 +359,10 @@ pub struct Config {
     pub noise_volume: f32,
     #[serde(default = "bool::default")]
     pub use_alternate_hook: bool,
+    #[serde(default = "bool::default")]
+    pub show_console: bool,
+    #[serde(default = "Stage::default")]
+    pub stage: Stage,
 }
 
 impl Config {
@@ -373,6 +387,8 @@ impl Default for Config {
             play_noise: false,
             noise_volume: 1.0,
             use_alternate_hook: false,
+            show_console: false,
+            stage: Stage::default(),
         }
     }
 }
@@ -724,12 +740,18 @@ impl Bot {
 
     pub fn draw_ui(&mut self, ctx: &egui::Context) {
         // process hotkeys
+        let wants_keyboard = ctx.wants_keyboard_input();
         let (toggle_menu, toggle_bot, toggle_noise) = ctx.input_mut(|i| {
-            (
-                self.conf.shortcuts.toggle_menu.pressed(i),
-                self.conf.shortcuts.toggle_bot.pressed(i),
-                self.conf.shortcuts.toggle_noise.pressed(i),
-            )
+            // for some reason it deadlocks when i put `ctx.wants_keyboard_input()` here?
+            if wants_keyboard {
+                (false, false, false)
+            } else {
+                (
+                    self.conf.shortcuts.toggle_menu.pressed(i),
+                    self.conf.shortcuts.toggle_bot.pressed(i),
+                    self.conf.shortcuts.toggle_noise.pressed(i),
+                )
+            }
         });
         if toggle_menu {
             self.conf.hidden = !self.conf.hidden;
@@ -770,28 +792,49 @@ impl Bot {
             self.open_noise_toggle_toast(&mut toasts);
         }
 
-        egui::Window::new("Clickpack").show(ctx, |ui| {
-            self.show_clickpack_window(ui, modal.clone());
-        });
-        egui::Window::new("Options").show(ctx, |ui| {
-            self.show_options_window(ui, modal.clone(), &mut toasts);
-        });
-        egui::Window::new("Audio").show(ctx, |ui| {
-            if ui
-                .checkbox(&mut self.conf.enabled, "Enable clickbot")
-                .changed()
-            {
-                self.open_clickbot_toggle_toast(&mut toasts);
-            }
-
+        egui::Window::new("ZCB Live").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.conf.stage, Stage::Clickpack, "Clickpack");
+                ui.selectable_value(&mut self.conf.stage, Stage::Audio, "Audio");
+                ui.selectable_value(&mut self.conf.stage, Stage::Options, "Options");
+            });
             ui.separator();
-            ui.add_enabled_ui(self.conf.enabled, |ui| {
-                self.show_audio_window(ui, &mut toasts);
+
+            egui::ScrollArea::both().show(ui, |ui| {
+                match self.conf.stage {
+                    Stage::Clickpack => self.show_clickpack_window(ui, modal.clone()),
+                    Stage::Audio => {
+                        if ui
+                            .checkbox(&mut self.conf.enabled, "Enable clickbot")
+                            .changed()
+                        {
+                            self.open_clickbot_toggle_toast(&mut toasts);
+                        }
+
+                        // ui.separator();
+                        ui.add_enabled_ui(self.conf.enabled, |ui| {
+                            self.show_audio_window(ui, &mut toasts);
+                        });
+                    }
+                    Stage::Options => self.show_options_window(ui, modal.clone(), &mut toasts),
+                };
             });
         });
 
         toasts.show(ctx);
         modal.lock().unwrap().show_dialog();
+    }
+
+    pub fn maybe_alloc_console(&self) {
+        if self.conf.show_console {
+            unsafe { AllocConsole().unwrap() };
+            static INIT_ONCE: Once = Once::new();
+            INIT_ONCE.call_once(|| {
+                simple_logger::SimpleLogger::new()
+                    .init()
+                    .expect("failed to initialize simple_logger");
+            });
+        }
     }
 
     fn show_options_window(
@@ -842,6 +885,18 @@ impl Bot {
                     ui.label(RichText::new("Requires restart!").color(Color32::YELLOW));
                 }
             });
+            help_text(ui, "Show debug console", |ui| {
+                if ui
+                    .checkbox(&mut self.conf.show_console, "Show console")
+                    .changed()
+                {
+                    if self.conf.show_console {
+                        self.maybe_alloc_console();
+                    } else {
+                        let _ = unsafe { FreeConsole() };
+                    }
+                }
+            });
 
             ui.horizontal(|ui| {
                 ui.style_mut().spacing.item_spacing.x = 4.0;
@@ -864,7 +919,7 @@ impl Bot {
                 }
                 if self.conf != self.prev_conf {
                     ui.style_mut().spacing.item_spacing.x = 4.0;
-                    ui.label("(!)");
+                    ui.label("(!)").on_hover_text("Unsaved changes");
                 }
                 ui.style_mut().spacing.item_spacing.x = 4.0;
                 if ui
@@ -1341,41 +1396,42 @@ impl Bot {
 
         if !self.is_loading_clickpack && has_sounds && !self.playlayer.is_null() {
             ui.separator();
-
-            let dur = Duration::from_secs_f64(self.prev_time);
-            let ago = self
-                .playlayer
-                .to_option()
-                .map(|playlayer| playlayer.time() - dur.as_secs_f64());
-            help_text(ui, &format!("{dur:?} since the start of the level"), |ui| {
-                if let Some(ago) = ago {
-                    ui.label(format!("Last action time: {dur:.2?} ({ago:.2}s ago)"));
+            ui.collapsing("Debug", |ui| {
+                let dur = Duration::from_secs_f64(self.prev_time);
+                let ago = self
+                    .playlayer
+                    .to_option()
+                    .map(|playlayer| playlayer.time() - dur.as_secs_f64());
+                help_text(ui, &format!("{dur:?} since the start of the level"), |ui| {
+                    if let Some(ago) = ago {
+                        ui.label(format!("Last action time: {dur:.2?} ({ago:.2}s ago)"));
+                    } else {
+                        ui.label(format!("Last action time: {dur:.2?}"));
+                    }
+                });
+                if self.prev_resolved_click_type != ClickType::None {
+                    ui.label(format!(
+                        "Last click type: {:?} (resolved to {:?})",
+                        self.prev_click_type, self.prev_resolved_click_type
+                    ));
                 } else {
-                    ui.label(format!("Last action time: {dur:.2?}"));
+                    ui.label(format!("Last click type: {:?}", self.prev_click_type));
                 }
-            });
-            if self.prev_resolved_click_type != ClickType::None {
                 ui.label(format!(
-                    "Last click type: {:?} (resolved to {:?})",
-                    self.prev_click_type, self.prev_resolved_click_type
+                    "Last pitch: {:.4} ({} => {})",
+                    self.prev_pitch, self.conf.pitch.from, self.conf.pitch.to
                 ));
-            } else {
-                ui.label(format!("Last click type: {:?}", self.prev_click_type));
-            }
-            ui.label(format!(
-                "Last pitch: {:.4} ({} => {})",
-                self.prev_pitch, self.conf.pitch.from, self.conf.pitch.to
-            ));
-            ui.label(format!(
-                "Last volume: {:.4} (+/- {} * {})",
-                self.prev_volume,
-                self.conf.volume_settings.volume_var,
-                self.conf.volume_settings.global_volume
-            ));
-            ui.label(format!(
-                "Last spam volume offset: {:.4}",
-                self.prev_spam_offset
-            ));
+                ui.label(format!(
+                    "Last volume: {:.4} (+/- {} * {})",
+                    self.prev_volume,
+                    self.conf.volume_settings.volume_var,
+                    self.conf.volume_settings.global_volume
+                ));
+                ui.label(format!(
+                    "Last spam volume offset: {:.4}",
+                    self.prev_spam_offset
+                ));
+            });
         }
     }
 }
