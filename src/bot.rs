@@ -12,6 +12,7 @@ use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
+    process::Command,
     sync::{Arc, Mutex, Once},
     time::{Duration, Instant},
 };
@@ -329,7 +330,7 @@ fn f32_one() -> f32 {
 }
 
 // clickpack, options, audio
-#[derive(Serialize, Deserialize, Clone, PartialEq, Default)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Default, Copy)]
 pub enum Stage {
     #[default]
     Clickpack,
@@ -363,6 +364,8 @@ pub struct Config {
     pub show_console: bool,
     #[serde(default = "Stage::default")]
     pub stage: Stage,
+    #[serde(default = "bool::default")]
+    pub use_fmod: bool,
 }
 
 impl Config {
@@ -389,6 +392,7 @@ impl Default for Config {
             use_alternate_hook: false,
             show_console: false,
             stage: Stage::default(),
+            use_fmod: false,
         }
     }
 }
@@ -668,7 +672,7 @@ impl Bot {
         if self.conf.pitch_enabled {
             rand::thread_rng().gen_range(self.conf.pitch.from..=self.conf.pitch.to)
         } else {
-            0.0
+            1.0
         }
     }
 
@@ -985,13 +989,16 @@ impl Bot {
                             .open();
                     }
                 }
+                ui.style_mut().spacing.item_spacing.x = 4.0;
                 if ui
                     .button("Reset")
                     .on_hover_text("Reset the current configuration to defaults")
                     .clicked()
                 {
                     let prev_bufsize = self.conf.buffer_size;
+                    let prev_stage = self.conf.stage;
                     self.conf = Config::default();
+                    self.conf.stage = prev_stage; // don't switch current tab
                     self.did_reset_config = true;
                     self.apply_config(prev_bufsize);
                     toasts.add(Toast {
@@ -999,6 +1006,13 @@ impl Bot {
                         text: "Reset configuration to defaults".into(),
                         options: ToastOptions::default().duration_in_seconds(2.0),
                     });
+                }
+                if ui
+                    .button("Open folder")
+                    .on_hover_text("Open .zcb folder in explorer")
+                    .clicked()
+                {
+                    Command::new("explorer").arg(".zcb").spawn().unwrap();
                 }
             });
             ui.label(format!(
@@ -1057,6 +1071,57 @@ impl Bot {
         });
     }
 
+    #[cfg(feature = "special")]
+    fn show_device_switcher(&mut self, ui: &mut egui::Ui, toasts: &mut Toasts) {
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_label("Output device")
+                .selected_text(&self.selected_device)
+                .show_ui(ui, |ui| {
+                    let devices = self.devices.lock().unwrap().clone();
+                    for device in &devices {
+                        let is_selected = &self.selected_device == device;
+                        if ui
+                            .selectable_value(&mut self.selected_device, device.clone(), device)
+                            .clicked()
+                            && !is_selected
+                        {
+                            // start a new mixer on new device
+                            log::info!("switching audio device to \"{device}\"");
+                            self.mixer = Mixer::new();
+                            self.mixer
+                                .init_ex(Device::Name(device.clone()), StreamSettings::default());
+                            self.play_noise(true);
+                            toasts.add(Toast {
+                                kind: ToastKind::Success,
+                                text: format!("Switched device to \"{device}\"").into(),
+                                options: ToastOptions::default().duration_in_seconds(3.0),
+                            });
+                        }
+                    }
+                })
+                .response
+                .on_disabled_hover_text("Not available with FMOD");
+            if ui
+                .button("Reset")
+                .on_hover_text("Reset to the default audio device")
+                .clicked()
+            {
+                self.mixer = Mixer::new();
+                self.mixer.init();
+                if let Ok(name) = Device::Default.name() {
+                    self.selected_device = name.clone();
+                    toasts.add(Toast {
+                        kind: ToastKind::Success,
+                        text: format!("Switched device to \"{name}\"").into(),
+                        options: ToastOptions::default().duration_in_seconds(3.0),
+                    });
+                }
+                self.play_noise(true);
+                log::debug!("reset audio device");
+            }
+        });
+    }
+
     fn show_audio_window(&mut self, ui: &mut egui::Ui, toasts: &mut Toasts) {
         ui.add_enabled_ui(self.noise.is_some() && !self.is_loading_clickpack, |ui| {
             ui.horizontal(|ui| {
@@ -1086,54 +1151,17 @@ impl Bot {
             });
         });
 
-        #[cfg(feature = "special")]
-        ui.horizontal(|ui| {
-            egui::ComboBox::from_label("Output device")
-                .selected_text(&self.selected_device)
-                .show_ui(ui, |ui| {
-                    let devices = self.devices.lock().unwrap().clone();
-                    for device in &devices {
-                        let is_selected = &self.selected_device == device;
-                        if ui
-                            .selectable_value(&mut self.selected_device, device.clone(), device)
-                            .clicked()
-                            && !is_selected
-                        {
-                            // start a new mixer on new device
-                            log::info!("switching audio device to \"{device}\"");
-                            self.mixer = Mixer::new();
-                            self.mixer
-                                .init_ex(Device::Name(device.clone()), StreamSettings::default());
-                            self.play_noise(true);
-                            toasts.add(Toast {
-                                kind: ToastKind::Success,
-                                text: format!("Switched device to \"{device}\"").into(),
-                                options: ToastOptions::default().duration_in_seconds(3.0),
-                            });
-                        }
-                    }
-                });
-            if ui
-                .button("Reset")
-                .on_hover_text("Reset to the default audio device")
-                .clicked()
-            {
-                self.mixer = Mixer::new();
-                self.mixer.init();
-                if let Ok(name) = Device::Default.name() {
-                    self.selected_device = name.clone();
-                    toasts.add(Toast {
-                        kind: ToastKind::Success,
-                        text: format!("Switched device to \"{name}\"").into(),
-                        options: ToastOptions::default().duration_in_seconds(3.0),
-                    });
-                }
-                self.play_noise(true);
-                log::debug!("reset audio device");
-            }
-        });
+        help_text(
+            ui,
+            "Use the internal audio engine for integration with internal recorders",
+            |ui| ui.checkbox(&mut self.conf.use_fmod, "Use FMOD"),
+        );
 
         #[cfg(feature = "special")]
+        ui.add_enabled_ui(!self.conf.use_fmod, |ui| {
+            self.show_device_switcher(ui, toasts)
+        });
+
         ui.separator();
 
         ui.collapsing("Timings", |ui| {
@@ -1313,14 +1341,12 @@ impl Bot {
                 ui,
                 "Audio buffer size in samples.\nLower value means lower latency",
                 |ui| {
-                    ui.horizontal(|ui| {
-                        if u32_edit_field_min1(ui, &mut self.conf.buffer_size).changed() {
-                            self.buffer_size_changed = prev_bufsize != self.conf.buffer_size;
-                        }
-                        ui.label("Buffer size");
-                    });
+                    ui.label("Buffer size");
                 },
             );
+            if u32_edit_field_min1(ui, &mut self.conf.buffer_size).changed() {
+                self.buffer_size_changed = prev_bufsize != self.conf.buffer_size;
+            }
 
             if self.buffer_size_changed {
                 ui.horizontal(|ui| {
@@ -1351,6 +1377,8 @@ impl Bot {
                 });
             }
         });
+
+        ui.allocate_space(vec2(100.0, 0.0));
     }
 
     fn apply_config(&mut self, prev_bufsize: u32) {
@@ -1442,6 +1470,16 @@ impl Bot {
         let has_sounds = self.num_sounds != (0, 0);
 
         ui.add_enabled_ui(!self.is_loading_clickpack, |ui| {
+            if !self.clickpacks.is_empty() {
+                help_text(
+                    ui,
+                    "If there's no folders inside .zcb/clickpacks,\n\
+                    there will be an option to choose the clickpack manually",
+                    |ui| {
+                        ui.label("Put clickpacks in .zcb/clickpacks");
+                    },
+                );
+            }
             ui.horizontal(|ui| {
                 self.select_clickpack_button(ui, modal);
                 if !self.selected_clickpack.is_empty() {
