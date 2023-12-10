@@ -347,6 +347,8 @@ pub struct Config {
     pub play_noise: bool,
     #[serde(default = "f32_one")]
     pub noise_volume: f32,
+    #[serde(default = "bool::default")]
+    pub use_alternate_hook: bool,
 }
 
 impl Config {
@@ -370,6 +372,7 @@ impl Default for Config {
             buffer_size: default_buffer_size(),
             play_noise: false,
             noise_volume: 1.0,
+            use_alternate_hook: false,
         }
     }
 }
@@ -433,6 +436,7 @@ pub struct Bot {
     pub prev_spam_offset: f32,
     pub buffer_size_changed: bool,
     pub noise_sound: Option<SoundHandle>,
+    pub show_alternate_hook_warning: bool,
 }
 
 impl Default for Bot {
@@ -459,6 +463,7 @@ impl Default for Bot {
             prev_spam_offset: f32::NAN,
             buffer_size_changed: false,
             noise_sound: None,
+            show_alternate_hook_warning: false,
         }
     }
 }
@@ -644,7 +649,10 @@ impl Bot {
             return;
         }
 
-        if !self.playlayer.level_settings().is_2player() && player2 {
+        if (!self.playlayer.level_settings().is_2player() && player2)
+            || self.playlayer.is_paused()
+            || (!push && self.playlayer.time() == 0.0)
+        {
             return;
         }
 
@@ -689,6 +697,15 @@ impl Bot {
         self.prev_click_type = click_type;
         self.prev_resolved_click_type = resolved_click_type;
         self.prev_pitch = pitch;
+    }
+
+    pub fn oninit(&mut self) {
+        self.prev_time = 0.0;
+        self.prev_click_type = ClickType::None;
+        self.prev_resolved_click_type = ClickType::None;
+        self.prev_pitch = 0.0;
+        self.prev_volume = self.conf.volume_settings.global_volume;
+        self.prev_spam_offset = 0.0;
     }
 
     fn open_clickbot_toggle_toast(&self, toasts: &mut Toasts) {
@@ -797,6 +814,31 @@ impl Bot {
         });
         ui.collapsing("Configuration", |ui| {
             ui.horizontal(|ui| {
+                help_text(
+                    ui,
+                    "Use an alternate pushbutton/releasebutton hook for bot compatibility",
+                    |ui| {
+                        if ui
+                            .checkbox(&mut self.conf.use_alternate_hook, "Use alternate hook")
+                            .changed()
+                        {
+                            self.show_alternate_hook_warning = !self.show_alternate_hook_warning;
+                            if self.show_alternate_hook_warning {
+                                toasts.add(Toast {
+                                    kind: ToastKind::Info,
+                                    text: "Changing this option requires a game restart!".into(),
+                                    options: ToastOptions::default().duration_in_seconds(2.0),
+                                });
+                            }
+                        }
+                    },
+                );
+                if self.show_alternate_hook_warning {
+                    ui.label(RichText::new("Requires restart!").color(Color32::YELLOW));
+                }
+            });
+
+            ui.horizontal(|ui| {
                 ui.style_mut().spacing.item_spacing.x = 4.0;
                 if ui
                     .button("Save")
@@ -853,8 +895,8 @@ impl Bot {
                 }
             });
             ui.label(format!(
-                "Last saved {:.2?} ago",
-                self.last_conf_save.elapsed()
+                "Last saved {:.2?}s ago",
+                self.last_conf_save.elapsed().as_secs_f32()
             ));
         });
         ui.allocate_space(ui.available_size() - vec2(0.0, 280.0));
@@ -987,6 +1029,53 @@ impl Bot {
         #[cfg(feature = "special")]
         ui.separator();
 
+        ui.collapsing("Timings", |ui| {
+            let timings_copy = self.conf.timings.clone();
+            let timings = &mut self.conf.timings;
+            let fields = [
+                (
+                    "Anything above this time between clicks plays hardclicks/hardreleases",
+                    &mut timings.hard,
+                    timings_copy.regular..=f32::INFINITY,
+                    "Hard timing",
+                ),
+                (
+                    "Anything above this time between clicks plays clicks/releases",
+                    &mut timings.regular,
+                    timings_copy.soft..=timings_copy.hard,
+                    "Regular timing",
+                ),
+                (
+                    "Anything above this time between clicks plays softclicks/softreleases",
+                    &mut timings.soft,
+                    0.0..=timings_copy.regular,
+                    "Soft timing",
+                ),
+            ];
+            for field in fields {
+                help_text(ui, field.0, |ui| {
+                    ui.horizontal(|ui| {
+                        let dragged = ui
+                            .add(
+                                egui::DragValue::new(field.1)
+                                    .clamp_range(field.2.clone())
+                                    .speed(0.01),
+                            )
+                            .dragged();
+                        let mut text = RichText::new(field.3);
+                        if dragged && (*field.1 == *field.2.start() || *field.1 == *field.2.end()) {
+                            text = text.color(Color32::LIGHT_RED);
+                        }
+                        ui.label(text);
+                    });
+                });
+            }
+            ui.label(format!(
+                "Any value smaller than {:.2?} plays microclicks/microreleases",
+                Duration::from_secs_f32(timings.soft),
+            ))
+        });
+
         ui.collapsing("Pitch variation", |ui| {
             ui.label(
                 "Pitch variation can make clicks sound more realistic by \
@@ -1042,21 +1131,6 @@ impl Bot {
                     "Random volume variation (+/-)",
                     &mut vol.volume_var,
                     "Volume variation",
-                ),
-                (
-                    "Time between clicks which are considered spam clicks",
-                    &mut vol.spam_time,
-                    "Spam time",
-                ),
-                (
-                    "The value which the volume offset factor is multiplied by",
-                    &mut vol.spam_vol_offset_factor,
-                    "Spam volume offset factor",
-                ),
-                (
-                    "The maximum value of the volume offset",
-                    &mut vol.max_spam_vol_offset,
-                    "Maximum volume offset",
                 ),
             ];
             for field in fields {
@@ -1250,41 +1324,43 @@ impl Bot {
             );
         }
 
-        ui.separator();
+        if !self.is_loading_clickpack && has_sounds && !self.playlayer.is_null() {
+            ui.separator();
 
-        let dur = Duration::from_secs_f64(self.prev_time);
-        let ago = self
-            .playlayer
-            .to_option()
-            .map(|playlayer| playlayer.time() - dur.as_secs_f64());
-        help_text(ui, &format!("{dur:?} since the start of the level"), |ui| {
-            if let Some(ago) = ago {
-                ui.label(format!("Last action time: {dur:.2?} ({ago:.2}s ago)"));
+            let dur = Duration::from_secs_f64(self.prev_time);
+            let ago = self
+                .playlayer
+                .to_option()
+                .map(|playlayer| playlayer.time() - dur.as_secs_f64());
+            help_text(ui, &format!("{dur:?} since the start of the level"), |ui| {
+                if let Some(ago) = ago {
+                    ui.label(format!("Last action time: {dur:.2?} ({ago:.2}s ago)"));
+                } else {
+                    ui.label(format!("Last action time: {dur:.2?}"));
+                }
+            });
+            if self.prev_resolved_click_type != ClickType::None {
+                ui.label(format!(
+                    "Last click type: {:?} (resolved to {:?})",
+                    self.prev_click_type, self.prev_resolved_click_type
+                ));
             } else {
-                ui.label(format!("Last action time: {dur:.2?}"));
+                ui.label(format!("Last click type: {:?}", self.prev_click_type));
             }
-        });
-        if self.prev_resolved_click_type != ClickType::None {
             ui.label(format!(
-                "Last click type: {:?} (resolved to {:?})",
-                self.prev_click_type, self.prev_resolved_click_type
+                "Last pitch: {:.4} ({} => {})",
+                self.prev_pitch, self.conf.pitch.from, self.conf.pitch.to
             ));
-        } else {
-            ui.label(format!("Last click type: {:?}", self.prev_click_type));
+            ui.label(format!(
+                "Last volume: {:.4} (+/- {} * {})",
+                self.prev_volume,
+                self.conf.volume_settings.volume_var,
+                self.conf.volume_settings.global_volume
+            ));
+            ui.label(format!(
+                "Last spam volume offset: {:.4}",
+                self.prev_spam_offset
+            ));
         }
-        ui.label(format!(
-            "Last pitch: {:.4} ({} => {})",
-            self.prev_pitch, self.conf.pitch.from, self.conf.pitch.to
-        ));
-        ui.label(format!(
-            "Last volume: {:.4} (+/- {} * {})",
-            self.prev_volume,
-            self.conf.volume_settings.volume_var,
-            self.conf.volume_settings.global_volume
-        ));
-        ui.label(format!(
-            "Last spam volume offset: {:.4}",
-            self.prev_spam_offset
-        ));
     }
 }

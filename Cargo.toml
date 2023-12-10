@@ -24,7 +24,7 @@ egui-keybind = { version = "0.2.4", features = ["serde"] }
 egui-modal = "0.3.1"
 egui-toast = { git = "https://github.com/zeozeozeo/egui-toast.git", branch = "egui-0.24.1" }
 egui_gl_hook = { path = "egui_gl_hook" }
-geometrydash = "0.2.2"
+geometrydash = "0.2.3"
 kittyaudio = "0.1.6"
 log = "0.4.20"
 once_cell = "1.18.0"

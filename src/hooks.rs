@@ -1,11 +1,14 @@
 use crate::BOT;
-use geometrydash::{get_base, patch_mem, PlayLayer, PlayerObject, Ptr};
+use geometrydash::{get_base, patch_mem, AddressUtils, GameManager, PlayLayer, PlayerObject, Ptr};
 use retour::static_detour;
 
 // pushButton/releaseButton methods that take [PlayerObject].
 
 type FnPushButton = unsafe extern "fastcall" fn(PlayerObject, Ptr, i32) -> bool;
 type FnReleaseButton = unsafe extern "fastcall" fn(PlayerObject, Ptr, i32) -> bool;
+
+type FnPushButton2 = unsafe extern "fastcall" fn(PlayLayer, Ptr, i32, bool) -> u32;
+type FnReleaseButton2 = unsafe extern "fastcall" fn(PlayLayer, Ptr, i32, bool) -> u32;
 
 /// called when entering a level.
 type FnInit = unsafe extern "fastcall" fn(PlayLayer, Ptr, Ptr) -> bool;
@@ -16,6 +19,8 @@ type FnQuit = unsafe extern "fastcall" fn(PlayLayer, Ptr);
 static_detour! {
     static PushButton: unsafe extern "fastcall" fn(PlayerObject, Ptr, i32) -> bool;
     static ReleaseButton: unsafe extern "fastcall" fn(PlayerObject, Ptr, i32) -> bool;
+    static PushButton2: unsafe extern "fastcall" fn(PlayLayer, Ptr, i32, bool) -> u32;
+    static ReleaseButton2: unsafe extern "fastcall" fn(PlayLayer, Ptr, i32, bool) -> u32;
     static Init: unsafe extern "fastcall" fn(PlayLayer, Ptr, Ptr) -> bool;
     static Quit: unsafe extern "fastcall" fn(PlayLayer, Ptr);
 }
@@ -30,20 +35,42 @@ fn push_button(player: PlayerObject, _edx: Ptr, button: i32) -> bool {
 fn release_button(player: PlayerObject, _edx: Ptr, button: i32) -> bool {
     let res = unsafe { ReleaseButton.call(player, 0, button) };
     // log::info!("releasebutton: {button}");
+    unsafe { BOT.on_action(false, BOT.is_player2_obj(player)) };
+    res
+}
 
-    // what? FIXME
-    if button != 2011438332 {
-        unsafe { BOT.on_action(false, BOT.is_player2_obj(player)) };
+#[inline]
+fn is_player1(playlayer: PlayLayer, button: bool) -> bool {
+    let is2player = playlayer.level_settings().is_2player();
+    let flip = is2player && GameManager::shared().get_game_variable("0010");
+    !is2player || (button ^ flip)
+}
+
+fn push_button2(playlayer: PlayLayer, _edx: Ptr, param: i32, button: bool) -> u32 {
+    let res = unsafe { PushButton2.call(playlayer, 0, param, button) };
+    if !playlayer.is_null() {
+        unsafe { BOT.playlayer = playlayer };
     }
+    unsafe { BOT.on_action(true, !is_player1(playlayer, button)) };
+    res
+}
+
+fn release_button2(playlayer: PlayLayer, _edx: Ptr, param: i32, button: bool) -> u32 {
+    let res = unsafe { ReleaseButton2.call(playlayer, 0, param, button) };
+    if !playlayer.is_null() {
+        unsafe { BOT.playlayer = playlayer };
+    }
+    unsafe { BOT.on_action(false, !is_player1(playlayer, button)) };
     res
 }
 
 fn init(playlayer: PlayLayer, _edx: Ptr, level: Ptr) -> bool {
     let res = unsafe { Init.call(playlayer, 0, level) };
 
-    // update playlayer
+    // update playlayer, call oninit
     if res {
         unsafe { BOT.playlayer = playlayer };
+        unsafe { BOT.oninit() };
     }
 
     res
@@ -54,7 +81,6 @@ fn quit(playlayer: PlayLayer, _edx: Ptr) {
 
     // set playlayer to null
     unsafe { BOT.playlayer = PlayLayer::from_address(0) };
-    log::debug!("quit");
 }
 
 macro_rules! patch {
@@ -90,23 +116,45 @@ pub unsafe fn init_hooks() {
     use std::mem::transmute;
     anticheat_bypass();
 
-    // pushbutton
-    let push_button_fn: FnPushButton = transmute(get_base() + 0x1F4E40);
-    PushButton
-        .initialize(push_button_fn, push_button)
-        .expect("failed to hook PushButton");
-    PushButton
-        .enable()
-        .expect("failed to enable PushButton hook");
+    let alternate = unsafe { BOT.conf.use_alternate_hook };
 
-    // releasebutton (same type as FnPushButton)
-    let release_button_fn: FnReleaseButton = transmute(get_base() + 0x1F4F70);
-    ReleaseButton
-        .initialize(release_button_fn, release_button)
-        .expect("failed to hook ReleaseButton");
-    ReleaseButton
-        .enable()
-        .expect("failed to enable ReleaseButton hook");
+    if !alternate {
+        // pushbutton
+        let push_button_fn: FnPushButton = transmute(get_base() + 0x1F4E40);
+        PushButton
+            .initialize(push_button_fn, push_button)
+            .expect("failed to hook PushButton");
+        PushButton
+            .enable()
+            .expect("failed to enable PushButton hook");
+
+        // releasebutton (same type as FnPushButton)
+        let release_button_fn: FnReleaseButton = transmute(get_base() + 0x1F4F70);
+        ReleaseButton
+            .initialize(release_button_fn, release_button)
+            .expect("failed to hook ReleaseButton");
+        ReleaseButton
+            .enable()
+            .expect("failed to enable ReleaseButton hook");
+    } else {
+        // pushbutton2
+        let push_button_fn2: FnPushButton2 = transmute(get_base() + 0x111500);
+        PushButton2
+            .initialize(push_button_fn2, push_button2)
+            .expect("failed to hook PushButton2");
+        PushButton2
+            .enable()
+            .expect("failed to enable PushButton2 hook");
+
+        // releasebutton2 (same type as FnPushButton2)
+        let release_button_fn2: FnReleaseButton2 = transmute(get_base() + 0x111660);
+        ReleaseButton2
+            .initialize(release_button_fn2, release_button2)
+            .expect("failed to hook ReleaseButton2");
+        ReleaseButton2
+            .enable()
+            .expect("failed to enable ReleaseButton2 hook");
+    }
 
     // init
     let init_fn: FnInit = transmute(get_base() + 0x01FB780);
@@ -125,6 +173,10 @@ pub unsafe fn disable_hooks() {
         .map_err(|e| log::error!("failed to disable PushButton hook: {e}"));
     let _ = unsafe { ReleaseButton.disable() }
         .map_err(|e| log::error!("failed to disable ReleaseButton hook: {e}"));
+    let _ = unsafe { PushButton2.disable() }
+        .map_err(|e| log::error!("failed to disable PushButton2 hook: {e}"));
+    let _ = unsafe { ReleaseButton2.disable() }
+        .map_err(|e| log::error!("failed to disable ReleaseButton2 hook: {e}"));
     let _ = unsafe { Init.disable() }.map_err(|e| log::error!("failed to disable Init hook: {e}"));
     let _ = unsafe { Quit.disable() }.map_err(|e| log::error!("failed to disable Quit hook: {e}"));
 }
