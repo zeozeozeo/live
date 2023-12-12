@@ -59,19 +59,29 @@ fn is_player1(playlayer: PlayLayer, button: bool) -> bool {
 
 fn push_button2(playlayer: PlayLayer, _edx: Ptr, param: i32, button: bool) -> u32 {
     let res = unsafe { PushButton2.call(playlayer, 0, param, button) };
-    if !playlayer.is_null() {
-        unsafe { BOT.playlayer = playlayer };
+    if unsafe { BOT.playlayer.is_null() } && !playlayer.is_null() {
+        log::debug!("push2 init");
+        unsafe { BOT.on_init() };
     }
-    unsafe { BOT.on_action(true, !is_player1(playlayer, button)) };
+    unsafe { BOT.playlayer = playlayer };
+
+    if unsafe { BOT.conf.use_alternate_hook } {
+        unsafe { BOT.on_action(true, !is_player1(playlayer, button)) };
+    }
     res
 }
 
 fn release_button2(playlayer: PlayLayer, _edx: Ptr, param: i32, button: bool) -> u32 {
     let res = unsafe { ReleaseButton2.call(playlayer, 0, param, button) };
-    if !playlayer.is_null() {
-        unsafe { BOT.playlayer = playlayer };
+    if unsafe { BOT.playlayer.is_null() } && !playlayer.is_null() {
+        log::debug!("release2 init");
+        unsafe { BOT.on_init() };
     }
-    unsafe { BOT.on_action(false, !is_player1(playlayer, button)) };
+    unsafe { BOT.playlayer = playlayer };
+
+    if unsafe { BOT.conf.use_alternate_hook } {
+        unsafe { BOT.on_action(false, !is_player1(playlayer, button)) };
+    }
     res
 }
 
@@ -79,7 +89,7 @@ fn init(playlayer: PlayLayer, _edx: Ptr, level: Ptr) -> bool {
     let res = unsafe { Init.call(playlayer, 0, level) };
     log::debug!("init");
     unsafe { BOT.playlayer = playlayer };
-    unsafe { BOT.oninit() };
+    unsafe { BOT.on_init() };
     res
 }
 
@@ -92,8 +102,15 @@ fn quit(playlayer: PlayLayer, _edx: Ptr) {
 
 fn reset(playlayer: PlayLayer, _edx: Ptr) {
     unsafe { Reset.call(playlayer, 0) };
+
+    if unsafe { BOT.playlayer.is_null() } && !playlayer.is_null() {
+        log::debug!("reset init");
+        unsafe { BOT.on_init() };
+    }
+    unsafe { BOT.playlayer = playlayer };
+
     log::debug!("reset");
-    unsafe { BOT.onreset() };
+    unsafe { BOT.on_reset() };
 }
 
 fn init_fmod(cclayer: Ptr, _edx: Ptr, gamelevel: Ptr) -> bool {
@@ -102,8 +119,9 @@ fn init_fmod(cclayer: Ptr, _edx: Ptr, gamelevel: Ptr) -> bool {
 }
 
 fn update(playlayer: PlayLayer, _edx: Ptr, dt: f32) {
-    if unsafe { BOT.playlayer.is_null() } {
-        unsafe { BOT.oninit() };
+    if unsafe { BOT.playlayer.is_null() } && !playlayer.is_null() {
+        log::debug!("update init");
+        unsafe { BOT.on_init() };
     }
     unsafe { BOT.playlayer = playlayer };
     unsafe { Update.call(playlayer, 0, dt) };

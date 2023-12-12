@@ -129,22 +129,91 @@ impl ClickType {
             Self::MicroRelease
         }
     }
-
-    #[rustfmt::skip]
     pub fn preferred(self) -> [Self; 8] {
         use ClickType::*;
 
-        // this is perfect
         match self {
-            HardClick =>    [HardClick,    Click,        SoftClick,   MicroClick  , HardRelease,  Release,      SoftRelease, MicroRelease],
-            HardRelease =>  [HardRelease,  Release,      SoftRelease, MicroRelease, HardRelease,  Release,      SoftRelease, MicroRelease],
-            Click =>        [Click,        HardClick,    SoftClick,   MicroClick  , Release,      HardRelease,  SoftRelease, MicroRelease],
-            Release =>      [Release,      HardRelease,  SoftRelease, MicroRelease, Release,      HardRelease,  SoftRelease, MicroRelease],
-            SoftClick =>    [SoftClick,    MicroClick,   Click,       HardClick   , SoftRelease,  MicroRelease, Release,     HardRelease ],
-            SoftRelease =>  [SoftRelease,  MicroRelease, Release,     HardRelease , SoftRelease,  MicroRelease, Release,     HardRelease ],
-            MicroClick =>   [MicroClick,   SoftClick,    Click,       HardClick   , MicroRelease, SoftRelease,  Release,     HardRelease ],
-            MicroRelease => [MicroRelease, SoftRelease,  Release,     HardRelease , MicroRelease, SoftRelease,  Release,     HardRelease ],
-            None =>         [None,         None,         None,        None        , None,         None,         None,        None        ],
+            HardClick => [
+                HardClick,
+                Click,
+                SoftClick,
+                MicroClick,
+                HardRelease,
+                Release,
+                SoftRelease,
+                MicroRelease,
+            ],
+            HardRelease => [
+                HardRelease,
+                Release,
+                SoftRelease,
+                MicroRelease,
+                HardClick,
+                Click,
+                SoftClick,
+                MicroClick,
+            ],
+            Click => [
+                Click,
+                HardClick,
+                SoftClick,
+                MicroClick,
+                Release,
+                HardRelease,
+                SoftRelease,
+                MicroRelease,
+            ],
+            Release => [
+                Release,
+                HardRelease,
+                SoftRelease,
+                MicroRelease,
+                Click,
+                HardClick,
+                SoftClick,
+                MicroClick,
+            ],
+            SoftClick => [
+                SoftClick,
+                MicroClick,
+                Click,
+                HardClick,
+                SoftRelease,
+                MicroRelease,
+                Release,
+                HardRelease,
+            ],
+            SoftRelease => [
+                SoftRelease,
+                MicroRelease,
+                Release,
+                HardRelease,
+                SoftClick,
+                MicroClick,
+                Click,
+                HardClick,
+            ],
+            MicroClick => [
+                MicroClick,
+                SoftClick,
+                Click,
+                HardClick,
+                MicroRelease,
+                SoftRelease,
+                Release,
+                HardRelease,
+            ],
+            MicroRelease => [
+                MicroRelease,
+                SoftRelease,
+                Release,
+                HardRelease,
+                MicroClick,
+                SoftClick,
+                Click,
+                HardClick,
+            ],
+            None => [None, None, None, None, None, None, None, None],
         }
     }
 
@@ -435,6 +504,8 @@ pub struct Config {
     pub use_playlayer_time: bool,
     #[serde(default = "bool::default")]
     pub cut_sounds: bool,
+    #[serde(default = "bool::default")]
+    pub cut_by_releases: bool,
 }
 
 impl Config {
@@ -464,6 +535,7 @@ impl Default for Config {
             use_fmod: false,
             use_playlayer_time: false,
             cut_sounds: false,
+            cut_by_releases: false,
         }
     }
 }
@@ -762,13 +834,22 @@ impl Bot {
         }
     }
 
+    pub fn on_init(&mut self) {
+        self.prev_time = 0.0;
+        self.prev_click_type = ClickType::None;
+        self.prev_resolved_click_type = ClickType::None;
+        self.prev_pitch = 0.0;
+        self.prev_volume = self.conf.volume_settings.global_volume;
+        self.prev_spam_offset = 0.0;
+        self.level_start = Instant::now();
+    }
+
+    pub fn on_reset(&mut self) {
+        self.level_start = Instant::now();
+    }
+
     pub fn on_action(&mut self, push: bool, player2: bool) {
         if self.num_sounds == (0, 0) || self.playlayer.is_null() {
-            return;
-        }
-
-        #[cfg(not(feature = "special"))]
-        if self.playlayer.is_dead() {
             return;
         }
 
@@ -776,6 +857,11 @@ impl Bot {
             || self.playlayer.is_paused()
             || (!push && self.playlayer.time() == 0.0)
         {
+            return;
+        }
+
+        #[cfg(not(feature = "special"))]
+        if self.playlayer.is_dead() {
             return;
         }
 
@@ -828,11 +914,12 @@ impl Bot {
         }
 
         // stop all playing sounds (acb behaviour)
-        if self.conf.cut_sounds {
+        if self.conf.cut_sounds && !(click_type.is_release() && !self.conf.cut_by_releases) {
             for sound in &self.mixer.renderer.guard().sounds {
                 // check if this is the noise sound, we don't want to stop it
+                let sound_len = sound.guard().frames.len();
                 if let Some(noise_sound) = &self.noise_sound {
-                    if noise_sound.guard().frames.len() == sound.guard().frames.len() {
+                    if noise_sound.guard().frames.len() == sound_len {
                         continue;
                     }
                 }
@@ -847,20 +934,6 @@ impl Bot {
         self.prev_click_type = click_type;
         self.prev_resolved_click_type = resolved_click_type;
         self.prev_pitch = pitch;
-    }
-
-    pub fn oninit(&mut self) {
-        self.prev_time = 0.0;
-        self.prev_click_type = ClickType::None;
-        self.prev_resolved_click_type = ClickType::None;
-        self.prev_pitch = 0.0;
-        self.prev_volume = self.conf.volume_settings.global_volume;
-        self.prev_spam_offset = 0.0;
-        self.level_start = Instant::now();
-    }
-
-    pub fn onreset(&mut self) {
-        self.level_start = Instant::now();
     }
 
     #[inline]
@@ -1395,6 +1468,11 @@ impl Bot {
                 changes the sound significantly in spams",
                 |ui| ui.checkbox(&mut self.conf.cut_sounds, "Cut sounds"),
             );
+            if self.conf.cut_sounds {
+                help_text(ui, "Allow clicks to be cut by releases", |ui| {
+                    ui.checkbox(&mut self.conf.cut_by_releases, "Cut by releases")
+                });
+            }
             let vol = &mut self.conf.volume_settings;
             let fields = [
                 (
