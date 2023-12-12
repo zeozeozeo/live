@@ -6,8 +6,8 @@ use egui_modal::{Icon, Modal};
 use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 use geometrydash::{
     fmod::{
-        FMOD_System_CreateSound, FMOD_CREATESOUNDEXINFO, FMOD_DEFAULT, FMOD_SOUND,
-        FMOD_SOUND_FORMAT_PCMFLOAT, FMOD_SYSTEM,
+        FMOD_System_CreateSound, FMOD_System_PlaySound, FMOD_CREATESOUNDEXINFO, FMOD_DEFAULT,
+        FMOD_SOUND, FMOD_SOUND_FORMAT_PCMFLOAT, FMOD_SYSTEM,
     },
     AddressUtils, FMODAudioEngine, PlayLayer, PlayerObject,
 };
@@ -173,6 +173,7 @@ pub struct SoundWrapper {
 
 impl SoundWrapper {
     pub fn from_sound(sound: Sound) -> Self {
+        // TODO TODO FIXME
         use std::mem::size_of;
         let mut exinfo: FMOD_CREATESOUNDEXINFO = unsafe { std::mem::zeroed() };
         exinfo.cbsize = size_of::<FMOD_CREATESOUNDEXINFO>() as i32;
@@ -181,8 +182,8 @@ impl SoundWrapper {
         exinfo.defaultfrequency = sound.sample_rate() as i32;
         // 2 channels, f32 sound
         exinfo.length = sound.frames.len() as u32 * size_of::<f32>() as u32 * 2;
-
         let mut fmod_sound: *mut FMOD_SOUND = std::ptr::null_mut();
+
         unsafe {
             if FMOD_System_CreateSound(
                 fmod_system(),
@@ -192,7 +193,10 @@ impl SoundWrapper {
                 &mut fmod_sound,
             ) != 0
             {
-                log::error!("failed to create fmod sound!");
+                log::error!(
+                    "failed to create fmod sound! ptr: {fmod_sound:?}, sys: {:?}",
+                    fmod_system()
+                );
             }
         };
 
@@ -429,6 +433,8 @@ pub struct Config {
     pub use_fmod: bool,
     #[serde(default = "bool::default")]
     pub use_playlayer_time: bool,
+    #[serde(default = "bool::default")]
+    pub cut_sounds: bool,
 }
 
 impl Config {
@@ -457,6 +463,7 @@ impl Default for Config {
             stage: Stage::default(),
             use_fmod: false,
             use_playlayer_time: false,
+            cut_sounds: false,
         }
     }
 }
@@ -778,6 +785,18 @@ impl Bot {
 
         // get click
         let (mut click, resolved_click_type) = self.get_random_click(click_type, player2);
+        if self.conf.use_fmod {
+            unsafe {
+                FMOD_System_PlaySound(
+                    fmod_system(),
+                    click.fmod_sound,
+                    std::ptr::null_mut(),
+                    0,
+                    std::ptr::null_mut(),
+                );
+            }
+            return;
+        }
         let pitch = self.get_pitch();
         click.set_playback_rate(PlaybackRate::Factor(pitch));
 
@@ -806,6 +825,21 @@ impl Bot {
 
             click.set_volume(volume);
             self.prev_volume = volume;
+        }
+
+        // stop all playing sounds (acb behaviour)
+        if self.conf.cut_sounds {
+            for sound in &self.mixer.renderer.guard().sounds {
+                // check if this is the noise sound, we don't want to stop it
+                if let Some(noise_sound) = &self.noise_sound {
+                    if noise_sound.guard().frames.len() == sound.guard().frames.len() {
+                        continue;
+                    }
+                }
+
+                // kis!!
+                sound.seek_to_end();
+            }
         }
 
         self.mixer.play(click.sound);
@@ -1109,9 +1143,11 @@ impl Bot {
                 }
                 if ui
                     .button("Open folder")
-                    .on_hover_text("Open .zcb folder in explorer")
+                    .on_hover_text("Open .zcb folder")
                     .clicked()
                 {
+                    let _ = std::fs::create_dir_all(".zcb")
+                        .map_err(|e| log::error!("failed to create .zcb: {e}"));
                     Command::new("explorer").arg(".zcb").spawn().unwrap();
                 }
             });
@@ -1353,6 +1389,12 @@ impl Bot {
         });
 
         ui.collapsing("Volume settings", |ui| {
+            help_text(
+                ui,
+                "Cut overlapping click sounds,\n\
+                changes the sound significantly in spams",
+                |ui| ui.checkbox(&mut self.conf.cut_sounds, "Cut sounds"),
+            );
             let vol = &mut self.conf.volume_settings;
             let fields = [
                 (
@@ -1494,8 +1536,13 @@ impl Bot {
     }
 
     fn select_clickpack_combobox(&mut self, ui: &mut egui::Ui, modal: Arc<Mutex<Modal>>) {
+        let ellipsis = if self.selected_clickpack.len() <= 16 {
+            self.selected_clickpack.clone()
+        } else {
+            format!("{:.16}…", self.selected_clickpack)
+        };
         egui::ComboBox::from_label("Select clickpack")
-            .selected_text(&self.selected_clickpack)
+            .selected_text(ellipsis)
             .show_ui(ui, |ui| {
                 for path in &self.clickpacks {
                     let dirname = path.file_name().unwrap().to_str().unwrap();
@@ -1565,11 +1612,26 @@ impl Bot {
             }
             ui.horizontal(|ui| {
                 self.select_clickpack_button(ui, modal);
-                if !self.selected_clickpack.is_empty() {
-                    if ui.button("🗙").on_hover_text("Unload clickpack").clicked() {
-                        self.unload_clickpack();
+                ui.horizontal(|ui| {
+                    if !self.selected_clickpack.is_empty() {
+                        ui.style_mut().spacing.item_spacing.x = 4.0;
+                        if ui.button("🗙").on_hover_text("Unload clickpack").clicked() {
+                            self.unload_clickpack();
+                        }
                     }
-                }
+                    if ui
+                        .button("Open folder")
+                        .on_hover_text("Open .zcb/clickpacks")
+                        .clicked()
+                    {
+                        let _ = std::fs::create_dir_all(".zcb/clickpacks")
+                            .map_err(|e| log::error!("failed to create .zcb/clickpacks: {e}"));
+                        Command::new("explorer")
+                            .arg(".zcb\\clickpacks")
+                            .spawn()
+                            .unwrap();
+                    }
+                });
             });
         });
 

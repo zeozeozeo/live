@@ -18,6 +18,12 @@ type FnQuit = unsafe extern "fastcall" fn(PlayLayer, Ptr);
 
 type FnReset = unsafe extern "fastcall" fn(PlayLayer, Ptr);
 
+/// CCLayer, edx, GJGameLevel
+type FnInitFMOD = unsafe extern "fastcall" fn(Ptr, Ptr, Ptr) -> bool;
+
+/// called on each frame
+type FnUpdate = unsafe extern "fastcall" fn(PlayLayer, Ptr, f32);
+
 static_detour! {
     static PushButton: unsafe extern "fastcall" fn(PlayerObject, Ptr, i32) -> bool;
     static ReleaseButton: unsafe extern "fastcall" fn(PlayerObject, Ptr, i32) -> bool;
@@ -26,7 +32,8 @@ static_detour! {
     static Init: unsafe extern "fastcall" fn(PlayLayer, Ptr, Ptr) -> bool;
     static Quit: unsafe extern "fastcall" fn(PlayLayer, Ptr);
     static Reset: unsafe extern "fastcall" fn(PlayLayer, Ptr);
-
+    static InitFMOD: unsafe extern "fastcall" fn(Ptr, Ptr, Ptr) -> bool;
+    static Update: unsafe extern "fastcall" fn(PlayLayer, Ptr, f32);
 }
 
 fn push_button(player: PlayerObject, _edx: Ptr, button: i32) -> bool {
@@ -70,13 +77,9 @@ fn release_button2(playlayer: PlayLayer, _edx: Ptr, param: i32, button: bool) ->
 
 fn init(playlayer: PlayLayer, _edx: Ptr, level: Ptr) -> bool {
     let res = unsafe { Init.call(playlayer, 0, level) };
-
-    // update playlayer, call oninit
-    if res {
-        unsafe { BOT.playlayer = playlayer };
-        unsafe { BOT.oninit() };
-    }
-
+    log::debug!("init");
+    unsafe { BOT.playlayer = playlayer };
+    unsafe { BOT.oninit() };
     res
 }
 
@@ -89,7 +92,21 @@ fn quit(playlayer: PlayLayer, _edx: Ptr) {
 
 fn reset(playlayer: PlayLayer, _edx: Ptr) {
     unsafe { Reset.call(playlayer, 0) };
+    log::debug!("reset");
     unsafe { BOT.onreset() };
+}
+
+fn init_fmod(cclayer: Ptr, _edx: Ptr, gamelevel: Ptr) -> bool {
+    log::info!("init fmod h");
+    unsafe { InitFMOD.call(cclayer, 0, gamelevel) }
+}
+
+fn update(playlayer: PlayLayer, _edx: Ptr, dt: f32) {
+    if unsafe { BOT.playlayer.is_null() } {
+        unsafe { BOT.oninit() };
+    }
+    unsafe { BOT.playlayer = playlayer };
+    unsafe { Update.call(playlayer, 0, dt) };
 }
 
 macro_rules! patch {
@@ -119,6 +136,16 @@ pub fn anticheat_bypass() {
     patch!(get_base() + 0x1ff7a2, &[0x90, 0x90]);
     patch!(get_base() + 0x18b2b4, &[0xb0, 0x01]);
     patch!(get_base() + 0x20c4e6, &[0xe9, 0xd7, 0x00, 0x00, 0x00, 0x90]);
+}
+
+macro_rules! hook {
+    ($static:expr, $typ:ty, $func:expr, $addr:expr) => {
+        let fn_h: $typ = transmute(get_base() + $addr);
+        $static
+            .initialize(fn_h, $func)
+            .expect("failed to hook PushButton" stringify!(Failed to ));
+        $static.enable().expect("failed to enable PushButton hook");
+    };
 }
 
 pub unsafe fn init_hooks() {
@@ -166,7 +193,7 @@ pub unsafe fn init_hooks() {
     }
 
     // init
-    let init_fn: FnInit = transmute(get_base() + 0x01FB780);
+    let init_fn: FnInit = transmute(get_base() + 0x1fb780);
     Init.initialize(init_fn, init).expect("failed to hook Init");
     Init.enable().expect("failed to enable Init hook");
 
@@ -181,6 +208,20 @@ pub unsafe fn init_hooks() {
         .initialize(reset_fn, reset)
         .expect("failed to hook Reset");
     Reset.enable().expect("failed to enable Reset hook");
+
+    // initfmod
+    // let init_fmod_fn: FnInitFMOD = transmute(get_base() + 0x01FB780);
+    // InitFMOD
+    //     .initialize(init_fmod_fn, init_fmod)
+    //     .expect("failed to hook InitFMOD");
+    // InitFMOD.enable().expect("failed to enable InitFMOD hook");
+
+    // update
+    let update_fn: FnUpdate = transmute(get_base() + 0x2029C0);
+    Update
+        .initialize(update_fn, update)
+        .expect("failed to hook Update");
+    Update.enable().expect("failed to enable Update hook");
 }
 
 pub unsafe fn disable_hooks() {
@@ -203,4 +244,8 @@ pub unsafe fn disable_hooks() {
     let _ = unsafe { Quit.disable() }.map_err(|e| log::error!("failed to disable Quit hook: {e}"));
     let _ =
         unsafe { Reset.disable() }.map_err(|e| log::error!("failed to disable Reset hook: {e}"));
+    // let _ = unsafe { InitFMOD.disable() }
+    //     .map_err(|e| log::error!("failed to disable InitFMOD hook: {e}"));
+    let _ =
+        unsafe { Update.disable() }.map_err(|e| log::error!("failed to disable Update hook: {e}"));
 }
