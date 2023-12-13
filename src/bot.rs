@@ -9,9 +9,13 @@ use egui_modal::{Icon, Modal};
 use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 use geometrydash::{
     fmod::{
-        FMOD_System_Create, FMOD_System_CreateSound, FMOD_System_Init, FMOD_System_PlaySound,
-        FMOD_CREATESOUNDEXINFO, FMOD_DEFAULT, FMOD_INIT_NORMAL, FMOD_SOUND,
-        FMOD_SOUND_FORMAT_PCMFLOAT, FMOD_SYSTEM, FMOD_VERSION,
+        FMOD_Sound_GetFormat, FMOD_Sound_GetLength, FMOD_Sound_ReadData, FMOD_System_Create,
+        FMOD_System_CreateSound, FMOD_System_Init, FMOD_System_PlaySound,
+        FMOD_System_SetSoftwareFormat, FMOD_System_Update, FMOD_ACCURATETIME, FMOD_CHANNEL,
+        FMOD_CREATESOUNDEXINFO, FMOD_DEFAULT, FMOD_INIT_NORMAL, FMOD_OK, FMOD_OPENMEMORY,
+        FMOD_OPENRAW, FMOD_OPENUSER, FMOD_RESULT, FMOD_SOUND, FMOD_SOUND_FORMAT_PCMFLOAT,
+        FMOD_SPEAKERMODE_STEREO, FMOD_SYSTEM, FMOD_TIMEUNIT_PCMBYTES, FMOD_TIMEUNIT_RAWBYTES,
+        FMOD_VERSION,
     },
     AddressUtils, FMODAudioEngine, PlayLayer, PlayerObject,
 };
@@ -21,6 +25,7 @@ use rand::{prelude::SliceRandom, Rng};
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use std::{
+    ffi::CString,
     ops::{Deref, DerefMut, RangeInclusive},
     path::{Path, PathBuf},
     process::Command,
@@ -238,11 +243,6 @@ impl ClickType {
     }
 }
 
-#[inline]
-fn fmod_system() -> *mut FMOD_SYSTEM {
-    FMODAudioEngine::shared().system()
-}
-
 #[derive(Clone)]
 pub struct SoundWrapper {
     sound: Sound,
@@ -250,32 +250,48 @@ pub struct SoundWrapper {
 }
 
 impl SoundWrapper {
-    pub fn from_sound(sound: Sound) -> Self {
-        // TODO TODO FIXME
-        use std::mem::size_of;
+    pub fn from_path(system: *mut FMOD_SYSTEM, path: &Path) -> Result<Self> {
+        // load kittyaudio sound
+        let sound = Sound::from_path(path)?;
+
+        // create fmod createsoundexinfo
         let mut exinfo: FMOD_CREATESOUNDEXINFO = unsafe { std::mem::zeroed() };
-        exinfo.cbsize = size_of::<FMOD_CREATESOUNDEXINFO>() as i32;
+        exinfo.cbsize = std::mem::size_of::<FMOD_CREATESOUNDEXINFO>() as i32;
         exinfo.numchannels = 2;
         exinfo.format = FMOD_SOUND_FORMAT_PCMFLOAT;
         exinfo.defaultfrequency = sound.sample_rate() as i32;
-        // 2 channels, f32 sound
-        exinfo.length = sound.frames.len() as u32 * size_of::<f32>() as u32 * 2;
+        exinfo.length = sound.frames.len() as u32 * std::mem::size_of::<f32>() as u32 * 2;
+
+        // fmod sound pointer
         let mut fmod_sound: *mut FMOD_SOUND = std::ptr::null_mut();
 
         unsafe {
-            if FMOD_System_CreateSound(
-                fmod_system(),
+            FMOD_System_Update(system);
+
+            /*
+            let res = FMOD_System_CreateSound(
+                system,
                 sound.frames.as_ptr() as *const i8,
-                FMOD_DEFAULT,
+                FMOD_OPENUSER,
                 &mut exinfo,
                 &mut fmod_sound,
-            ) != 0
-            {
+            );*/
+            let path_str = path.to_str().unwrap().to_string();
+            let cstr = CString::new(path_str).unwrap();
+            let res = FMOD_System_CreateSound(
+                system,
+                cstr.as_ptr(),
+                FMOD_DEFAULT,
+                std::ptr::null_mut(),
+                &mut fmod_sound,
+            );
+            if res != 0 {
                 log::error!(
-                    "failed to create fmod sound! ptr: {fmod_sound:?}, sys: {:?}",
-                    fmod_system()
+                    "failed to create fmod sound! ptr: {fmod_sound:?}, sys: {:?}, res: {res}",
+                    system
                 );
             }
+            log::debug!("fmod result: {res}");
         };
 
         Self { sound, fmod_sound }
@@ -308,7 +324,7 @@ pub struct Sounds {
     pub microreleases: Vec<SoundWrapper>,
 }
 
-fn read_clicks_in_directory(dir: &Path) -> Vec<SoundWrapper> {
+fn read_clicks_in_directory(dir: &Path, system: *mut FMOD_SYSTEM) -> Vec<SoundWrapper> {
     let Ok(dir) = dir.read_dir() else {
         log::warn!("can't find directory {dir:?}, skipping");
         return vec![];
@@ -317,7 +333,8 @@ fn read_clicks_in_directory(dir: &Path) -> Vec<SoundWrapper> {
     for entry in dir {
         let path = entry.unwrap().path();
         if path.is_file() {
-            let sound = Sound::from_path(path.clone()).map(|s| SoundWrapper::from_sound(s));
+            let sound =
+                Sound::from_path(path.clone()).map(|s| SoundWrapper::from_sound(s, system, &path));
             if let Ok(sound) = sound {
                 sounds.push(sound);
             } else if let Err(e) = sound {
@@ -349,7 +366,7 @@ pub fn find_noise_file(dir: &Path) -> Option<PathBuf> {
 }
 
 impl Sounds {
-    pub fn from_path(path: &Path) -> Self {
+    pub fn from_path(path: &Path, system: *mut FMOD_SYSTEM) -> Self {
         let mut sounds = Self::default();
 
         for (dir, clicks) in [
@@ -364,12 +381,12 @@ impl Sounds {
         ] {
             let mut pathbuf = path.to_path_buf();
             pathbuf.push(dir);
-            clicks.extend(read_clicks_in_directory(&pathbuf));
+            clicks.extend(read_clicks_in_directory(&pathbuf, system));
         }
 
         if !sounds.has_sounds() {
             log::warn!("no sounds found, assuming there's no subdirectories");
-            sounds.clicks = read_clicks_in_directory(path);
+            sounds.clicks = read_clicks_in_directory(path, system);
         }
 
         sounds
@@ -532,8 +549,8 @@ fn default_buffer_size() -> u32 {
 }
 
 #[inline]
-fn f32_one() -> f32 {
-    1.0
+fn float_one<Num: emath::Numeric>() -> Num {
+    Num::from_f64(1.0)
 }
 
 // clickpack, options, audio
@@ -563,7 +580,7 @@ pub struct Config {
     pub buffer_size: u32,
     #[serde(default = "bool::default")]
     pub play_noise: bool,
-    #[serde(default = "f32_one")]
+    #[serde(default = "float_one")]
     pub noise_volume: f32,
     #[serde(default = "bool::default")]
     pub use_alternate_hook: bool,
@@ -579,8 +596,10 @@ pub struct Config {
     pub cut_sounds: bool,
     #[serde(default = "bool::default")]
     pub cut_by_releases: bool,
-    #[serde(default = "f32_one")]
-    pub click_speedhack: f32,
+    #[serde(default = "float_one")]
+    pub click_speedhack: f64,
+    #[serde(default = "bool::default")]
+    pub hook_wait: bool,
 }
 
 impl Config {
@@ -612,6 +631,7 @@ impl Default for Config {
             cut_sounds: false,
             cut_by_releases: false,
             click_speedhack: 1.0,
+            hook_wait: false,
         }
     }
 }
@@ -682,6 +702,7 @@ pub struct Bot {
     pub level_start: Instant,
     pub used_alternate_hook: bool,
     pub system: *mut FMOD_SYSTEM,
+    pub channel: *mut FMOD_CHANNEL,
     pub env: Env,
     pub toast_queue: Arc<Mutex<Vec<Toast>>>,
 }
@@ -718,6 +739,7 @@ impl Default for Bot {
             level_start: Instant::now(),
             used_alternate_hook: use_alternate_hook,
             system: std::ptr::null_mut(),
+            channel: std::ptr::null_mut(),
             env: Env::load(),
             toast_queue: Arc::new(Mutex::new(vec![])),
         }
@@ -753,6 +775,11 @@ fn u32_edit_field_min1(ui: &mut egui::Ui, value: &mut u32) -> egui::Response {
         *value = result.max(1);
     }
     res
+}
+
+#[inline]
+fn fmod_system() -> *mut FMOD_SYSTEM {
+    FMODAudioEngine::shared().system()
 }
 
 fn drag_value<Num: emath::Numeric>(
@@ -807,12 +834,12 @@ impl Bot {
             // load for both players
             self.players
                 .0
-                .extend_with(&Sounds::from_path(&player1_path));
+                .extend_with(&Sounds::from_path(&player1_path, self.system));
             self.load_noise(&player1_path);
             if !player_dirnames.1.is_empty() {
                 self.players
                     .1
-                    .extend_with(&Sounds::from_path(&player2_path));
+                    .extend_with(&Sounds::from_path(&player2_path, self.system));
                 self.load_noise(&player2_path);
             }
         }
@@ -889,6 +916,18 @@ impl Bot {
         );
     }
 
+    pub unsafe fn init_fmod(&mut self) {
+        const SYSTEM_SAMPLERATE: i32 = 48_000;
+        log::info!("initializing fmod system");
+
+        FMOD_System_Create(&mut self.system, FMOD_VERSION);
+        let extra_driver_data = FMODAudioEngine::shared().extra_driver_data();
+        FMOD_System_Init(self.system, 2048, FMOD_INIT_NORMAL, extra_driver_data);
+        FMOD_System_SetSoftwareFormat(self.system, SYSTEM_SAMPLERATE, FMOD_SPEAKERMODE_STEREO, 0);
+
+        log::info!("successfully initialized fmod system, samplerate: {SYSTEM_SAMPLERATE}");
+    }
+
     pub fn init(&mut self) {
         // update thread
         #[cfg(feature = "special")]
@@ -915,6 +954,7 @@ impl Bot {
 
         // init audio playback
         self.maybe_init_kittyaudio();
+        unsafe { self.init_fmod() };
 
         // reload clickpacks
         let _ = self
@@ -983,13 +1023,6 @@ impl Bot {
         }
     }
 
-    fn init_fmod_system(&mut self) {
-        unsafe {
-            FMOD_System_Create(&mut self.system, FMOD_VERSION);
-            FMOD_System_Init(self.system, 512, FMOD_INIT_NORMAL, std::ptr::null_mut());
-        }
-    }
-
     pub fn on_init(&mut self) {
         self.prev_time = 0.0;
         self.prev_click_type = ClickType::None;
@@ -998,7 +1031,6 @@ impl Bot {
         self.prev_volume = self.conf.volume_settings.global_volume;
         self.prev_spam_offset = 0.0;
         self.level_start = Instant::now();
-        // self.init_fmod_system();
     }
 
     pub fn on_reset(&mut self) {
@@ -1029,18 +1061,23 @@ impl Bot {
         // get click
         let (mut click, resolved_click_type) = self.get_random_click(click_type, player2);
         if self.conf.use_fmod {
+            log::info!("playing fmod sound");
             unsafe {
                 FMOD_System_PlaySound(
-                    fmod_system(),
+                    self.system,
                     click.fmod_sound,
                     std::ptr::null_mut(),
                     0,
-                    std::ptr::null_mut(),
+                    &mut self.channel,
                 );
+                let mut length = 0u32;
+                FMOD_Sound_GetLength(click.fmod_sound, &mut length, 2);
+                log::info!("sound length: {length}");
+                FMOD_System_Update(self.system);
             }
             return;
         }
-        let pitch = self.get_pitch();
+        let pitch = self.get_pitch() * self.conf.click_speedhack;
         click.set_playback_rate(PlaybackRate::Factor(pitch));
 
         // compute & change volume
@@ -1285,6 +1322,11 @@ impl Bot {
                     ui.label(RichText::new("Requires restart!").color(Color32::YELLOW));
                 }
             });
+            help_text(
+                ui,
+                "Use if the Debug tab in Clickbot doesn't appear when you enter a level.\nRequires restart!",
+                |ui| ui.checkbox(&mut self.conf.hook_wait, "Wait until hooking"),
+            );
             help_text(ui, "Show debug console", |ui| {
                 if ui
                     .checkbox(&mut self.conf.show_console, "Show console")
@@ -1520,6 +1562,19 @@ impl Bot {
             "Use the internal audio engine for integration with internal recorders",
             |ui| ui.checkbox(&mut self.conf.use_fmod, "Use FMOD"),
         );
+
+        ui.horizontal(|ui| {
+            drag_value(
+                ui,
+                &mut self.conf.click_speedhack,
+                "Click speedhack",
+                0.0..=f64::INFINITY,
+                "Speed multiplier for clicks/releases",
+            );
+            if self.conf.click_speedhack != 1.0 && ui.button("Reset").clicked() {
+                self.conf.click_speedhack = 1.0;
+            }
+        });
 
         #[cfg(feature = "special")]
         ui.add_enabled_ui(!self.conf.use_fmod, |ui| {

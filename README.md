@@ -18,4 +18,6 @@ debug
 The first line is your DLL modloader folder, second line is the path with GeometryDash.exe, and the third line
 is `debug` or `release` (changes cargo build mode).
 
+ALWAYS BUILD IN RELEASE MODE!!
+
 You can also start the `build.py` file by double-clicking `build.bat`

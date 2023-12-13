@@ -158,7 +158,9 @@ pub fn anticheat_bypass() {
 
 pub unsafe fn init_hooks() {
     use std::mem::transmute;
-    std::thread::sleep(std::time::Duration::from_secs(3));
+    if unsafe { BOT.conf.hook_wait } {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+    }
     anticheat_bypass();
 
     let alternate = unsafe { BOT.conf.use_alternate_hook };

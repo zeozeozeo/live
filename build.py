@@ -14,7 +14,7 @@ with open("gamepath.txt", "r", encoding = "utf-8") as f:
     target_dir = buildmode + "/"
 
     if buildmode == "debug":
-        with subprocess.Popen("cargo build --features special") as pop:
+        with subprocess.Popen("cargo build") as pop:
             pop.wait()
     else:
         with subprocess.Popen("cargo build --release") as pop:
