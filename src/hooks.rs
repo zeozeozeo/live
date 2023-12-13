@@ -156,18 +156,9 @@ pub fn anticheat_bypass() {
     patch!(get_base() + 0x20c4e6, &[0xe9, 0xd7, 0x00, 0x00, 0x00, 0x90]);
 }
 
-macro_rules! hook {
-    ($static:expr, $typ:ty, $func:expr, $addr:expr) => {
-        let fn_h: $typ = transmute(get_base() + $addr);
-        $static
-            .initialize(fn_h, $func)
-            .expect("failed to hook PushButton" stringify!(Failed to ));
-        $static.enable().expect("failed to enable PushButton hook");
-    };
-}
-
 pub unsafe fn init_hooks() {
     use std::mem::transmute;
+    std::thread::sleep(std::time::Duration::from_secs(3));
     anticheat_bypass();
 
     let alternate = unsafe { BOT.conf.use_alternate_hook };
