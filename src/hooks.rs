@@ -1,6 +1,7 @@
 use crate::BOT;
 use geometrydash::{get_base, patch_mem, AddressUtils, GameManager, PlayLayer, PlayerObject, Ptr};
 use retour::static_detour;
+use std::ffi::c_void;
 
 // pushButton/releaseButton methods that take [PlayerObject].
 
@@ -21,6 +22,8 @@ type FnReset = unsafe extern "fastcall" fn(PlayLayer, Ptr);
 /// called on each frame
 type FnUpdate = unsafe extern "fastcall" fn(PlayLayer, Ptr, f32);
 
+type FnOnEditor = unsafe extern "fastcall" fn(PlayLayer, Ptr, Ptr) -> *const c_void;
+
 static_detour! {
     static PushButton: unsafe extern "fastcall" fn(PlayerObject, Ptr, i32) -> bool;
     static ReleaseButton: unsafe extern "fastcall" fn(PlayerObject, Ptr, i32) -> bool;
@@ -30,6 +33,8 @@ static_detour! {
     static Quit: unsafe extern "fastcall" fn(PlayLayer, Ptr);
     static Reset: unsafe extern "fastcall" fn(PlayLayer, Ptr);
     static Update: unsafe extern "fastcall" fn(PlayLayer, Ptr, f32);
+    static OnEditor: unsafe extern "fastcall" fn(PlayLayer, Ptr, Ptr) -> *const c_void;
+
 }
 
 fn push_button(player: PlayerObject, _edx: Ptr, button: i32) -> bool {
@@ -116,6 +121,11 @@ fn update(playlayer: PlayLayer, _edx: Ptr, dt: f32) {
     }
     unsafe { BOT.playlayer = playlayer };
     unsafe { Update.call(playlayer, 0, dt) };
+}
+
+fn on_editor(playlayer: PlayLayer, _edx: Ptr, param: Ptr) -> *const c_void {
+    unsafe { BOT.playlayer = PlayLayer::from_address(0) };
+    unsafe { OnEditor.call(playlayer, 0, param) }
 }
 
 macro_rules! patch {
@@ -224,6 +234,13 @@ pub unsafe fn init_hooks() {
         .initialize(update_fn, update)
         .expect("failed to hook Update");
     Update.enable().expect("failed to enable Update hook");
+
+    // oneditor
+    let on_editor_fn: FnOnEditor = transmute(get_base() + 0x1E60E0);
+    OnEditor
+        .initialize(on_editor_fn, on_editor)
+        .expect("failed to hook OnEditor");
+    OnEditor.enable().expect("failed to enable OnEditor hook");
 }
 
 pub unsafe fn disable_hooks() {
@@ -250,4 +267,6 @@ pub unsafe fn disable_hooks() {
     //     .map_err(|e| log::error!("failed to disable InitFMOD hook: {e}"));
     let _ =
         unsafe { Update.disable() }.map_err(|e| log::error!("failed to disable Update hook: {e}"));
+    let _ = unsafe { OnEditor.disable() }
+        .map_err(|e| log::error!("failed to disable OnEditor hook: {e}"));
 }
