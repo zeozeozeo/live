@@ -12,11 +12,11 @@ use egui_modal::{Icon, Modal};
 use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 use geometrydash::{
     fmod::{
-        FMOD_Channel_SetPitch, FMOD_Channel_SetVolume, FMOD_System_Create, FMOD_System_CreateSound,
-        FMOD_System_Init, FMOD_System_PlaySound, FMOD_System_SetSoftwareFormat, FMOD_System_Update,
-        FMOD_CHANNEL, FMOD_CREATESOUNDEXINFO, FMOD_INIT_NORMAL, FMOD_LOOP_OFF, FMOD_OPENMEMORY,
-        FMOD_OPENRAW, FMOD_SOUND, FMOD_SOUND_FORMAT_PCMFLOAT, FMOD_SPEAKERMODE_STEREO, FMOD_SYSTEM,
-        FMOD_VERSION,
+        FMOD_Channel_SetPitch, FMOD_Channel_SetVolume, FMOD_Sound_Release, FMOD_System_Create,
+        FMOD_System_CreateSound, FMOD_System_Init, FMOD_System_PlaySound, FMOD_System_Release,
+        FMOD_System_SetSoftwareFormat, FMOD_System_Update, FMOD_CHANNEL, FMOD_CREATESOUNDEXINFO,
+        FMOD_INIT_NORMAL, FMOD_LOOP_OFF, FMOD_OPENMEMORY, FMOD_OPENRAW, FMOD_SOUND,
+        FMOD_SOUND_FORMAT_PCMFLOAT, FMOD_SPEAKERMODE_STEREO, FMOD_SYSTEM, FMOD_VERSION,
     },
     AddressUtils, FMODAudioEngine, PlayLayer, PlayerObject,
 };
@@ -279,6 +279,15 @@ impl SoundWrapper {
 
         Ok(Self { sound, fmod_sound })
     }
+
+    fn free(&mut self) {
+        let _ = unsafe {
+            FMOD_Sound_Release(self.fmod_sound)
+                .fmod_result()
+                .map_err(|e| log::error!("failed to release fmod sound: {e}"))
+        };
+        self.fmod_sound = std::ptr::null_mut();
+    }
 }
 
 impl Deref for SoundWrapper {
@@ -389,6 +398,23 @@ impl Sounds {
         .iter()
         .map(|c| c.len())
         .sum()
+    }
+
+    fn free_fmod_sounds(&mut self) {
+        for sounds in [
+            &mut self.hardclicks,
+            &mut self.hardreleases,
+            &mut self.clicks,
+            &mut self.releases,
+            &mut self.softclicks,
+            &mut self.softreleases,
+            &mut self.microclicks,
+            &mut self.microreleases,
+        ] {
+            for sound in sounds {
+                sound.free();
+            }
+        }
     }
 
     #[inline]
@@ -819,6 +845,8 @@ impl Bot {
     fn unload_clickpack(&mut self) {
         log::debug!("unloading clickpack");
         self.num_sounds = (0, 0);
+        self.players.0.free_fmod_sounds();
+        self.players.1.free_fmod_sounds();
         self.players = (Sounds::default(), Sounds::default());
         self.noise = None;
         if let Some(noise_sound) = self.noise_sound.take() {
@@ -1975,6 +2003,18 @@ impl Bot {
                     self.prev_spam_offset
                 ));
             });
+        }
+    }
+}
+
+impl Drop for Bot {
+    fn drop(&mut self) {
+        if !self.system.is_null() {
+            let _ = unsafe {
+                FMOD_System_Release(self.system)
+                    .fmod_result()
+                    .map_err(|e| log::error!("failed to release fmod system: {e}"))
+            };
         }
     }
 }
