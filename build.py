@@ -17,7 +17,7 @@ with open("gamepath.txt", "r", encoding = "utf-8") as f:
         with subprocess.Popen("cargo build") as pop:
             pop.wait()
     else:
-        with subprocess.Popen("cargo build --features special --release") as pop:
+        with subprocess.Popen("cargo build --release") as pop:
             pop.wait()
 
     # copy file to modloader folder

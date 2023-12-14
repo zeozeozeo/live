@@ -12,10 +12,11 @@ use egui_modal::{Icon, Modal};
 use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 use geometrydash::{
     fmod::{
-        FMOD_Sound_GetLength, FMOD_System_Create, FMOD_System_CreateSound, FMOD_System_Init,
-        FMOD_System_PlaySound, FMOD_System_SetSoftwareFormat, FMOD_System_Update, FMOD_CHANNEL,
-        FMOD_CREATESOUNDEXINFO, FMOD_INIT_NORMAL, FMOD_LOOP_OFF, FMOD_OPENMEMORY, FMOD_OPENRAW,
-        FMOD_SOUND, FMOD_SOUND_FORMAT_PCMFLOAT, FMOD_SPEAKERMODE_STEREO, FMOD_SYSTEM, FMOD_VERSION,
+        FMOD_Channel_SetPitch, FMOD_Channel_SetVolume, FMOD_System_Create, FMOD_System_CreateSound,
+        FMOD_System_Init, FMOD_System_PlaySound, FMOD_System_SetSoftwareFormat, FMOD_System_Update,
+        FMOD_CHANNEL, FMOD_CREATESOUNDEXINFO, FMOD_INIT_NORMAL, FMOD_LOOP_OFF, FMOD_OPENMEMORY,
+        FMOD_OPENRAW, FMOD_SOUND, FMOD_SOUND_FORMAT_PCMFLOAT, FMOD_SPEAKERMODE_STEREO, FMOD_SYSTEM,
+        FMOD_VERSION,
     },
     AddressUtils, FMODAudioEngine, PlayLayer, PlayerObject,
 };
@@ -273,7 +274,7 @@ impl SoundWrapper {
                 &mut fmod_sound,
             )
             .fmod_result()
-            .map_err(|e| log::error!("failed to load fmod sound: {e}"));
+            .map_err(|e| log::error!("failed to create fmod sound: {e}"));
         };
 
         Ok(Self { sound, fmod_sound })
@@ -596,6 +597,8 @@ pub struct Config {
     pub cut_by_releases: bool,
     #[serde(default = "float_one")]
     pub click_speedhack: f64,
+    // #[serde(default = "true_value")]
+    // pub sync_speed_with_game: bool,
     #[serde(default = "bool::default")]
     pub hook_wait: bool,
 }
@@ -628,6 +631,7 @@ impl Default for Config {
             cut_sounds: false,
             cut_by_releases: false,
             click_speedhack: 1.0,
+            // sync_speed_with_game: true,
             hook_wait: false,
         }
     }
@@ -772,10 +776,19 @@ fn u32_edit_field_min1(ui: &mut egui::Ui, value: &mut u32) -> egui::Response {
     res
 }
 
+/*
 #[inline]
-fn fmod_system() -> *mut FMOD_SYSTEM {
-    FMODAudioEngine::shared().system()
+fn gd_audio_pitch() -> f32 {
+    let mut pitch = 1.0f32;
+    unsafe {
+        let _ = FMOD_Channel_GetPitch(
+            FMODAudioEngine::shared().current_sound_channel(),
+            &mut pitch,
+        );
+    };
+    pitch
 }
+*/
 
 fn drag_value<Num: emath::Numeric>(
     ui: &mut egui::Ui,
@@ -1058,28 +1071,17 @@ impl Bot {
         let now = self.time();
         let dt = (now - self.prev_time).abs() as f32;
         let click_type = ClickType::from_time(push, dt, &self.conf.timings);
+        let use_fmod = self.conf.use_fmod;
 
         // get click
         let (mut click, resolved_click_type) = self.get_random_click(click_type, player2);
-        if self.conf.use_fmod {
-            log::info!("playing fmod sound");
-            unsafe {
-                FMOD_System_PlaySound(
-                    self.system,
-                    click.fmod_sound,
-                    std::ptr::null_mut(),
-                    0,
-                    &mut self.channel,
-                );
-                let mut length = 0u32;
-                FMOD_Sound_GetLength(click.fmod_sound, &mut length, 2);
-                log::info!("sound length: {length}");
-                FMOD_System_Update(self.system);
-            }
-            return;
-        }
         let pitch = self.get_pitch() * self.conf.click_speedhack;
-        click.set_playback_rate(PlaybackRate::Factor(pitch));
+        // if self.conf.sync_speed_with_game {
+        //     pitch *= gd_audio_pitch() as f64;
+        // }
+        if !use_fmod {
+            click.set_playback_rate(PlaybackRate::Factor(pitch));
+        }
 
         // compute & change volume
         {
@@ -1104,12 +1106,17 @@ impl Bot {
             // multiply by global volume after all of the changes
             volume *= vol.global_volume;
 
-            click.set_volume(volume);
+            if !use_fmod {
+                click.set_volume(volume);
+            }
             self.prev_volume = volume;
         }
 
         // stop all playing sounds (acb behaviour)
-        if self.conf.cut_sounds && !(click_type.is_release() && !self.conf.cut_by_releases) {
+        if !use_fmod
+            && self.conf.cut_sounds
+            && !(click_type.is_release() && !self.conf.cut_by_releases)
+        {
             for sound in &self.mixer.renderer.guard().sounds {
                 // check if this is the noise sound, we don't want to stop it
                 let sound_len = sound.guard().frames.len();
@@ -1123,8 +1130,22 @@ impl Bot {
                 sound.seek_to_end();
             }
         }
-
-        self.mixer.play(click.sound);
+        if !use_fmod {
+            self.mixer.play(click.sound);
+        } else {
+            unsafe {
+                FMOD_System_PlaySound(
+                    self.system,
+                    click.fmod_sound,
+                    std::ptr::null_mut(),
+                    0,
+                    &mut self.channel,
+                );
+                FMOD_Channel_SetPitch(self.channel, pitch as f32);
+                FMOD_Channel_SetVolume(self.channel, self.prev_volume as f32);
+                FMOD_System_Update(self.system);
+            }
+        }
         self.prev_time = now;
         self.prev_click_type = click_type;
         self.prev_resolved_click_type = resolved_click_type;
@@ -1562,21 +1583,15 @@ impl Bot {
         help_text(
             ui,
             "Use the internal audio engine for integration with internal recorders",
-            |ui| ui.checkbox(&mut self.conf.use_fmod, "Use FMOD"),
+            |ui| {
+                if ui.checkbox(&mut self.conf.use_fmod, "Use FMOD").changed() {
+                    if !self.conf.use_fmod {
+                        self.maybe_init_kittyaudio();
+                        self.play_noise(true);
+                    }
+                }
+            },
         );
-
-        ui.horizontal(|ui| {
-            drag_value(
-                ui,
-                &mut self.conf.click_speedhack,
-                "Click speedhack",
-                0.0..=f64::INFINITY,
-                "Speed multiplier for clicks/releases",
-            );
-            if self.conf.click_speedhack != 1.0 && ui.button("Reset").clicked() {
-                self.conf.click_speedhack = 1.0;
-            }
-        });
 
         #[cfg(feature = "special")]
         ui.add_enabled_ui(!self.conf.use_fmod, |ui| {
@@ -1672,6 +1687,9 @@ impl Bot {
         ui.collapsing("Spam volume changes", |ui| {
             ui.label("This can be used to lower volume in spams");
             let vol = &mut self.conf.volume_settings;
+            help_text(ui, "Apply this logic to releases", |ui| {
+                ui.checkbox(&mut vol.change_releases_volume, "Change releases volume")
+            });
             drag_value(
                 ui,
                 &mut vol.spam_time,
@@ -1693,6 +1711,25 @@ impl Bot {
                 f32::NEG_INFINITY..=f32::INFINITY,
                 "The maximum value of the volume offset",
             );
+        });
+
+        ui.collapsing("Speed", |ui| {
+            ui.label("Adjust audio speed/pitch");
+            ui.horizontal(|ui| {
+                drag_value(
+                    ui,
+                    &mut self.conf.click_speedhack,
+                    "Click speedhack",
+                    0.0..=f64::INFINITY,
+                    "Speed multiplier for clicks/releases",
+                );
+                if self.conf.click_speedhack != 1.0 && ui.button("Reset").clicked() {
+                    self.conf.click_speedhack = 1.0;
+                }
+            });
+            // help_text(ui, "Synchronize click speedhack with game speed", |ui| {
+            //     ui.checkbox(&mut self.conf.sync_speed_with_game, "Sync speed with game")
+            // });
         });
 
         ui.collapsing("Advanced", |ui| {
