@@ -12,8 +12,9 @@ use egui_modal::{Icon, Modal};
 use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 use geometrydash::{
     fmod::{
-        FMOD_Channel_SetPitch, FMOD_Channel_SetVolume, FMOD_Sound_Release, FMOD_System_Create,
-        FMOD_System_CreateSound, FMOD_System_Init, FMOD_System_PlaySound, FMOD_System_Release,
+        FMOD_Channel_SetLoopCount, FMOD_Channel_SetPitch, FMOD_Channel_SetVolume,
+        FMOD_Channel_Stop, FMOD_Sound_Release, FMOD_System_Create, FMOD_System_CreateSound,
+        FMOD_System_Init, FMOD_System_PlaySound, FMOD_System_Release,
         FMOD_System_SetSoftwareFormat, FMOD_System_Update, FMOD_CHANNEL, FMOD_CREATESOUNDEXINFO,
         FMOD_INIT_NORMAL, FMOD_LOOP_OFF, FMOD_OPENMEMORY, FMOD_OPENRAW, FMOD_SOUND,
         FMOD_SOUND_FORMAT_PCMFLOAT, FMOD_SPEAKERMODE_STEREO, FMOD_SYSTEM, FMOD_VERSION,
@@ -704,7 +705,7 @@ impl Config {
 pub struct Bot {
     pub conf: Config,
     pub players: (Sounds, Sounds),
-    pub noise: Option<Sound>,
+    pub noise: Option<SoundWrapper>,
     pub mixer: Mixer,
     pub playlayer: PlayLayer,
     pub prev_time: f64,
@@ -731,6 +732,7 @@ pub struct Bot {
     pub channel: *mut FMOD_CHANNEL,
     pub env: Env,
     pub toast_queue: Arc<Mutex<Vec<Toast>>>,
+    pub fmod_noise_sound: *mut FMOD_CHANNEL,
 }
 
 impl Default for Bot {
@@ -767,6 +769,7 @@ impl Default for Bot {
             channel: std::ptr::null_mut(),
             env: Env::load(),
             toast_queue: Arc::new(Mutex::new(vec![])),
+            fmod_noise_sound: std::ptr::null_mut(),
         }
     }
 }
@@ -847,6 +850,9 @@ impl Bot {
         self.num_sounds = (0, 0);
         self.players.0.free_fmod_sounds();
         self.players.1.free_fmod_sounds();
+        if let Some(noise) = &mut self.noise {
+            noise.free();
+        }
         self.players = (Sounds::default(), Sounds::default());
         self.noise = None;
         if let Some(noise_sound) = self.noise_sound.take() {
@@ -903,7 +909,7 @@ impl Bot {
         // start playing the new noise file if the one from the previous clickpack
         // was playing
         if self.conf.play_noise {
-            self.play_noise(false);
+            self.play_noise();
         }
 
         Ok(())
@@ -914,7 +920,7 @@ impl Bot {
             return;
         };
         // try to load noise
-        self.noise = Sound::from_path(path).ok();
+        self.noise = SoundWrapper::from_path(self.system, &path).ok();
     }
 
     pub fn has_sounds(&self) -> bool {
@@ -1241,7 +1247,7 @@ impl Bot {
         }
         if toggle_noise {
             self.conf.play_noise = !self.conf.play_noise;
-            self.play_noise(false);
+            self.play_noise();
         }
 
         // auto-save config
@@ -1491,27 +1497,54 @@ impl Bot {
         }
     }
 
-    fn play_noise(&mut self, new_mixer: bool) {
-        if let Some(mut noise) = self.noise.clone() {
-            if new_mixer || self.noise_sound.is_none() {
-                // the mixer was recreated or noise has never started
-                if !self.conf.play_noise {
-                    noise.set_playback_rate(PlaybackRate::Factor(0.0));
-                }
-
-                // update noise speed and play the sound
+    fn play_noise(&mut self) {
+        let stop_kittyaudio_noise = |noise_sound: &mut Option<SoundHandle>| {
+            if let Some(noise_sound) = noise_sound {
+                noise_sound.set_playback_rate(PlaybackRate::Factor(0.0));
+            }
+            *noise_sound = None;
+        };
+        let stop_fmod_noise = |fmodn: &mut *mut FMOD_CHANNEL| {
+            unsafe { FMOD_Channel_Stop(*fmodn) };
+            *fmodn = std::ptr::null_mut();
+        };
+        let mut start_kittyaudio_noise = |noise_sound: &mut Option<SoundHandle>| {
+            if let Some(mut noise) = self.noise.clone() {
                 noise.set_volume(self.conf.noise_volume);
                 noise.set_loop_enabled(true);
-                noise.set_loop_index(0..=noise.frames.len().saturating_sub(1));
-                self.noise_sound = Some(self.mixer.play(noise));
-            } else if let Some(noise_sound) = &self.noise_sound {
-                // noise is already playing, mixer has not been recreated
-                noise.set_volume(self.conf.noise_volume);
-                noise_sound.set_playback_rate(PlaybackRate::Factor(if self.conf.play_noise {
-                    1.0
-                } else {
-                    0.0
-                }));
+                let frames = noise.frames.len().saturating_sub(1);
+                noise.set_loop_index(0..=frames);
+                *noise_sound = Some(self.mixer.play(noise.sound));
+            }
+        };
+        let start_fmod_noise = |fmodn: &mut *mut FMOD_CHANNEL| unsafe {
+            if let Some(noise) = self.noise.clone() {
+                FMOD_System_PlaySound(
+                    self.system,
+                    noise.fmod_sound,
+                    std::ptr::null_mut(),
+                    0,
+                    fmodn,
+                );
+                FMOD_Channel_SetVolume(*fmodn, self.conf.noise_volume);
+                FMOD_Channel_SetLoopCount(*fmodn, i32::MAX);
+            }
+        };
+
+        stop_kittyaudio_noise(&mut self.noise_sound);
+        stop_fmod_noise(&mut self.fmod_noise_sound);
+
+        if self.conf.use_fmod {
+            if self.conf.play_noise {
+                start_fmod_noise(&mut self.fmod_noise_sound);
+            } else {
+                stop_fmod_noise(&mut self.fmod_noise_sound);
+            }
+        } else {
+            if self.conf.play_noise {
+                start_kittyaudio_noise(&mut self.noise_sound);
+            } else {
+                stop_kittyaudio_noise(&mut self.noise_sound);
             }
         }
     }
@@ -1545,7 +1578,7 @@ impl Bot {
                             // start a new mixer on new device
                             log::info!("switching audio device to \"{device}\"");
                             self.maybe_init_kittyaudio();
-                            self.play_noise(true);
+                            self.play_noise();
                             self.env.save();
                             toasts.add(Toast {
                                 kind: ToastKind::Success,
@@ -1572,7 +1605,7 @@ impl Bot {
                         options: ToastOptions::default().duration_in_seconds(3.0),
                     });
                 }
-                self.play_noise(true);
+                self.play_noise();
                 self.env.save();
                 log::debug!("reset audio device");
             }
@@ -1588,7 +1621,7 @@ impl Bot {
                     .on_hover_text("Play the noise file")
                     .changed()
                 {
-                    self.play_noise(false);
+                    self.play_noise();
                     self.open_noise_toggle_toast(toasts);
                 }
 
@@ -1598,11 +1631,9 @@ impl Bot {
                             .speed(0.01)
                             .clamp_range(0.0..=f32::INFINITY),
                     )
-                    .changed()
+                    .drag_released()
                 {
-                    if let Some(noise_sound) = &self.noise_sound {
-                        noise_sound.set_volume(self.conf.noise_volume);
-                    }
+                    self.play_noise(); // restart noise
                 }
                 ui.label("Noise volume");
             });
@@ -1613,10 +1644,7 @@ impl Bot {
             "Use the internal audio engine for integration with internal recorders",
             |ui| {
                 if ui.checkbox(&mut self.conf.use_fmod, "Use FMOD").changed() {
-                    if !self.conf.use_fmod {
-                        self.maybe_init_kittyaudio();
-                        self.play_noise(true);
-                    }
+                    self.play_noise();
                 }
             },
         );
@@ -1782,7 +1810,7 @@ impl Bot {
                     {
                         self.maybe_init_kittyaudio();
                         self.buffer_size_changed = false;
-                        self.play_noise(true);
+                        self.play_noise();
                     }
 
                     if self.conf.buffer_size > 300_000 {
@@ -1801,6 +1829,7 @@ impl Bot {
     fn apply_config(&mut self, prev_bufsize: u32) {
         if prev_bufsize != self.conf.buffer_size {
             self.maybe_init_kittyaudio();
+            self.play_noise();
         }
     }
 
