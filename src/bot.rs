@@ -626,6 +626,8 @@ pub struct Config {
     pub click_speedhack: f64,
     // #[serde(default = "true_value")]
     // pub sync_speed_with_game: bool,
+    #[serde(default = "float_one")]
+    pub noise_speedhack: f64,
     #[serde(default = "bool::default")]
     pub hook_wait: bool,
 }
@@ -658,6 +660,7 @@ impl Default for Config {
             cut_sounds: false,
             cut_by_releases: false,
             click_speedhack: 1.0,
+            noise_speedhack: 1.0,
             // sync_speed_with_game: true,
             hook_wait: false,
         }
@@ -825,23 +828,27 @@ fn drag_value<Num: emath::Numeric>(
     text: impl Into<String>,
     clamp_range: RangeInclusive<Num>,
     help: &str,
-) {
+) -> egui::Response {
+    let mut resp = None;
     help_text(ui, help, |ui| {
-        let dragged = ui
-            .add(
+        resp = Some(
+            ui.add(
                 DragValue::new(value)
                     .clamp_range(clamp_range.clone())
                     .speed(0.01),
-            )
-            .dragged();
+            ),
+        );
         ui.label(
-            if dragged && (clamp_range.start() == value || clamp_range.end() == value) {
+            if resp.as_ref().unwrap().dragged()
+                && (clamp_range.start() == value || clamp_range.end() == value)
+            {
                 RichText::new(text).color(Color32::LIGHT_RED)
             } else {
                 RichText::new(text)
             },
         );
     });
+    resp.unwrap()
 }
 
 impl Bot {
@@ -1428,9 +1435,8 @@ impl Bot {
                 {
                     let conf = Config::load();
                     if let Ok(conf) = conf {
-                        let prev_bufsize = self.conf.buffer_size;
                         self.conf = conf;
-                        self.apply_config(prev_bufsize);
+                        self.apply_config();
                         toasts.add(Toast {
                             kind: ToastKind::Success,
                             text: "Loaded configuration from .zcb/config.json".into(),
@@ -1453,12 +1459,11 @@ impl Bot {
                     .on_hover_text("Reset the current configuration to defaults")
                     .clicked()
                 {
-                    let prev_bufsize = self.conf.buffer_size;
                     let prev_stage = self.conf.stage;
                     self.conf = Config::default();
                     self.conf.stage = prev_stage; // don't switch current tab
                     self.did_reset_config = true;
-                    self.apply_config(prev_bufsize);
+                    self.apply_config();
                     toasts.add(Toast {
                         kind: ToastKind::Info,
                         text: "Reset configuration to defaults".into(),
@@ -1496,7 +1501,9 @@ impl Bot {
     fn play_noise(&mut self) {
         let stop_kittyaudio_noise = |noise_sound: &mut Option<SoundHandle>| {
             if let Some(noise_sound) = noise_sound {
-                noise_sound.set_playback_rate(PlaybackRate::Factor(0.0));
+                noise_sound.set_playback_rate(PlaybackRate::Factor(1.0));
+                noise_sound.set_loop_enabled(false);
+                noise_sound.seek_to_end();
             }
             *noise_sound = None;
         };
@@ -1510,6 +1517,7 @@ impl Bot {
                 noise.set_loop_enabled(true);
                 let frames = noise.frames.len().saturating_sub(1);
                 noise.set_loop_index(0..=frames);
+                noise.set_playback_rate(PlaybackRate::Factor(self.conf.noise_speedhack));
                 *noise_sound = Some(self.mixer.play(noise.sound));
             }
         };
@@ -1524,6 +1532,8 @@ impl Bot {
                 );
                 FMOD_Channel_SetVolume(*fmodn, self.conf.noise_volume);
                 FMOD_Channel_SetLoopCount(*fmodn, i32::MAX);
+                FMOD_Channel_SetPitch(*fmodn, self.conf.noise_speedhack as f32);
+                FMOD_System_Update(self.system);
             }
         };
 
@@ -1621,17 +1631,17 @@ impl Bot {
                     self.open_noise_toggle_toast(toasts);
                 }
 
-                if ui
-                    .add(
-                        egui::DragValue::new(&mut self.conf.noise_volume)
-                            .speed(0.01)
-                            .clamp_range(0.0..=f32::INFINITY),
-                    )
-                    .drag_released()
+                if drag_value(
+                    ui,
+                    &mut self.conf.noise_volume,
+                    "Noise volume",
+                    0.0..=f32::INFINITY,
+                    "",
+                )
+                .drag_released()
                 {
                     self.play_noise(); // restart noise
                 }
-                ui.label("Noise volume");
             });
         });
 
@@ -1779,6 +1789,23 @@ impl Bot {
                     self.conf.click_speedhack = 1.0;
                 }
             });
+            ui.horizontal(|ui| {
+                if drag_value(
+                    ui,
+                    &mut self.conf.noise_speedhack,
+                    "Noise speedhack",
+                    0.0..=f64::INFINITY,
+                    "Speed multiplier for noise. Only useful if your clickpack has a noise file",
+                )
+                .drag_released()
+                {
+                    self.play_noise();
+                }
+                if self.conf.noise_speedhack != 1.0 && ui.button("Reset").clicked() {
+                    self.conf.noise_speedhack = 1.0;
+                    self.play_noise();
+                }
+            });
             // help_text(ui, "Synchronize click speedhack with game speed", |ui| {
             //     ui.checkbox(&mut self.conf.sync_speed_with_game, "Sync speed with game")
             // });
@@ -1822,11 +1849,9 @@ impl Bot {
         ui.allocate_space(vec2(100.0, 0.0));
     }
 
-    fn apply_config(&mut self, prev_bufsize: u32) {
-        if prev_bufsize != self.conf.buffer_size {
-            self.maybe_init_kittyaudio();
-            self.play_noise();
-        }
+    fn apply_config(&mut self) {
+        self.maybe_init_kittyaudio();
+        self.play_noise();
     }
 
     fn load_clickpack_thread(err_fn: impl Fn(anyhow::Error), dir: &Path) {
