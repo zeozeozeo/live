@@ -906,11 +906,7 @@ impl Bot {
         log::info!("{} player 2 sounds", self.num_sounds.1);
         log::info!("has noise: {}", self.noise.is_some());
 
-        // start playing the new noise file if the one from the previous clickpack
-        // was playing
-        if self.conf.play_noise {
-            self.play_noise();
-        }
+        self.play_noise();
 
         Ok(())
     }
