@@ -402,7 +402,8 @@ dependencies = [
 [[package]]
 name = "egui-toast"
 version = "0.10.1"
-source = "git+https://github.com/zeozeozeo/egui-toast.git?branch=egui-0.24.1#f10737aeb19a7e6d9aa89f95e520d8fae898195d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f51fa2cc975dbb99034a60776f753558d7dcd572aafd4c7c276d3c6cff272fd"
 dependencies = [
  "egui",
 ]

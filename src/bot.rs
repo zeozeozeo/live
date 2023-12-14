@@ -1,4 +1,7 @@
-use crate::{hooks, utils};
+use crate::{
+    hooks,
+    utils::{self, IntoFmodResult},
+};
 use anyhow::Result;
 use egui::{
     emath, pos2, vec2, Align2, Color32, Direction, DragValue, Key, KeyboardShortcut, Modifiers,
@@ -9,13 +12,10 @@ use egui_modal::{Icon, Modal};
 use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 use geometrydash::{
     fmod::{
-        FMOD_Sound_GetFormat, FMOD_Sound_GetLength, FMOD_Sound_ReadData, FMOD_System_Create,
-        FMOD_System_CreateSound, FMOD_System_Init, FMOD_System_PlaySound,
-        FMOD_System_SetSoftwareFormat, FMOD_System_Update, FMOD_ACCURATETIME, FMOD_CHANNEL,
-        FMOD_CREATESOUNDEXINFO, FMOD_DEFAULT, FMOD_INIT_NORMAL, FMOD_OK, FMOD_OPENMEMORY,
-        FMOD_OPENRAW, FMOD_OPENUSER, FMOD_RESULT, FMOD_SOUND, FMOD_SOUND_FORMAT_PCMFLOAT,
-        FMOD_SPEAKERMODE_STEREO, FMOD_SYSTEM, FMOD_TIMEUNIT_PCMBYTES, FMOD_TIMEUNIT_RAWBYTES,
-        FMOD_VERSION,
+        FMOD_Sound_GetLength, FMOD_System_Create, FMOD_System_CreateSound, FMOD_System_Init,
+        FMOD_System_PlaySound, FMOD_System_SetSoftwareFormat, FMOD_System_Update, FMOD_CHANNEL,
+        FMOD_CREATESOUNDEXINFO, FMOD_INIT_NORMAL, FMOD_LOOP_OFF, FMOD_OPENMEMORY, FMOD_OPENRAW,
+        FMOD_SOUND, FMOD_SOUND_FORMAT_PCMFLOAT, FMOD_SPEAKERMODE_STEREO, FMOD_SYSTEM, FMOD_VERSION,
     },
     AddressUtils, FMODAudioEngine, PlayLayer, PlayerObject,
 };
@@ -25,7 +25,6 @@ use rand::{prelude::SliceRandom, Rng};
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use std::{
-    ffi::CString,
     ops::{Deref, DerefMut, RangeInclusive},
     path::{Path, PathBuf},
     process::Command,
@@ -254,7 +253,7 @@ impl SoundWrapper {
         // load kittyaudio sound
         let sound = Sound::from_path(path)?;
 
-        // create fmod createsoundexinfo
+        // create fmod sound exinfo, we want to load the sound from memory
         let mut exinfo: FMOD_CREATESOUNDEXINFO = unsafe { std::mem::zeroed() };
         exinfo.cbsize = std::mem::size_of::<FMOD_CREATESOUNDEXINFO>() as i32;
         exinfo.numchannels = 2;
@@ -262,39 +261,22 @@ impl SoundWrapper {
         exinfo.defaultfrequency = sound.sample_rate() as i32;
         exinfo.length = sound.frames.len() as u32 * std::mem::size_of::<f32>() as u32 * 2;
 
-        // fmod sound pointer
+        // create fmod sound
         let mut fmod_sound: *mut FMOD_SOUND = std::ptr::null_mut();
-
         unsafe {
-            FMOD_System_Update(system);
-
-            /*
-            let res = FMOD_System_CreateSound(
+            // we ignore this error because it doesn't matter if you use the kittyaudio backend
+            let _ = FMOD_System_CreateSound(
                 system,
                 sound.frames.as_ptr() as *const i8,
-                FMOD_OPENUSER,
+                FMOD_OPENMEMORY | FMOD_OPENRAW | FMOD_LOOP_OFF,
                 &mut exinfo,
                 &mut fmod_sound,
-            );*/
-            let path_str = path.to_str().unwrap().to_string();
-            let cstr = CString::new(path_str).unwrap();
-            let res = FMOD_System_CreateSound(
-                system,
-                cstr.as_ptr(),
-                FMOD_DEFAULT,
-                std::ptr::null_mut(),
-                &mut fmod_sound,
-            );
-            if res != 0 {
-                log::error!(
-                    "failed to create fmod sound! ptr: {fmod_sound:?}, sys: {:?}, res: {res}",
-                    system
-                );
-            }
-            log::debug!("fmod result: {res}");
+            )
+            .fmod_result()
+            .map_err(|e| log::error!("failed to load fmod sound: {e}"));
         };
 
-        Self { sound, fmod_sound }
+        Ok(Self { sound, fmod_sound })
     }
 }
 
@@ -326,15 +308,14 @@ pub struct Sounds {
 
 fn read_clicks_in_directory(dir: &Path, system: *mut FMOD_SYSTEM) -> Vec<SoundWrapper> {
     let Ok(dir) = dir.read_dir() else {
-        log::warn!("can't find directory {dir:?}, skipping");
+        // log::warn!("can't find directory {dir:?}, skipping");
         return vec![];
     };
     let mut sounds = vec![];
     for entry in dir {
         let path = entry.unwrap().path();
         if path.is_file() {
-            let sound =
-                Sound::from_path(path.clone()).map(|s| SoundWrapper::from_sound(s, system, &path));
+            let sound = SoundWrapper::from_path(system, &path);
             if let Ok(sound) = sound {
                 sounds.push(sound);
             } else if let Err(e) = sound {
@@ -482,10 +463,28 @@ pub enum Clickpack {
     Path(PathBuf),
 }
 
+fn skip_serializing_selected_device(device: &str) -> bool {
+    if cfg!(feature = "special") {
+        let is_default = if let Ok(name) = Device::Default.name() {
+            name == device
+        } else {
+            false
+        };
+        device.is_empty() || is_default
+    } else {
+        true
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Env {
     version: String,
     clickpack: Clickpack,
+    #[serde(
+        default = "String::new",
+        skip_serializing_if = "skip_serializing_selected_device"
+    )]
+    pub selected_device: String,
 }
 
 impl Default for Env {
@@ -493,6 +492,7 @@ impl Default for Env {
         Self {
             version: built_info::PKG_VERSION.to_string(),
             clickpack: Clickpack::None,
+            selected_device: String::new(),
         }
     }
 }
@@ -570,8 +570,6 @@ pub struct Config {
     pub volume_settings: VolumeSettings,
     #[serde(default = "Shortcuts::default")]
     pub shortcuts: Shortcuts,
-    #[serde(default = "String::new", skip_serializing_if = "String::is_empty")]
-    pub selected_device: String,
     #[serde(default = "true_value")]
     pub enabled: bool,
     #[serde(default = "bool::default")]
@@ -617,7 +615,6 @@ impl Default for Config {
             timings: Timings::default(),
             volume_settings: VolumeSettings::default(),
             shortcuts: Shortcuts::default(),
-            selected_device: String::new(),
             enabled: true,
             hidden: false,
             buffer_size: default_buffer_size(),
@@ -684,7 +681,6 @@ pub struct Bot {
     pub is_loading_clickpack: bool,
     pub num_sounds: (usize, usize),
     pub selected_clickpack: String,
-    pub selected_device: String,
     pub devices: Arc<Mutex<Vec<String>>>,
     pub last_conf_save: Instant,
     pub prev_conf: Config,
@@ -721,7 +717,6 @@ impl Default for Bot {
             is_loading_clickpack: false,
             num_sounds: (0, 0),
             selected_clickpack: String::new(),
-            selected_device: String::new(),
             devices: Arc::new(Mutex::new(vec![])),
             last_conf_save: Instant::now(),
             prev_conf: conf,
@@ -916,16 +911,18 @@ impl Bot {
         );
     }
 
-    pub unsafe fn init_fmod(&mut self) {
+    pub unsafe fn init_fmod(&mut self) -> Result<()> {
         const SYSTEM_SAMPLERATE: i32 = 48_000;
         log::info!("initializing fmod system");
 
-        FMOD_System_Create(&mut self.system, FMOD_VERSION);
+        FMOD_System_Create(&mut self.system, FMOD_VERSION).fmod_result()?;
         let extra_driver_data = FMODAudioEngine::shared().extra_driver_data();
-        FMOD_System_Init(self.system, 2048, FMOD_INIT_NORMAL, extra_driver_data);
-        FMOD_System_SetSoftwareFormat(self.system, SYSTEM_SAMPLERATE, FMOD_SPEAKERMODE_STEREO, 0);
+        FMOD_System_Init(self.system, 2048, FMOD_INIT_NORMAL, extra_driver_data).fmod_result()?;
+        FMOD_System_SetSoftwareFormat(self.system, SYSTEM_SAMPLERATE, FMOD_SPEAKERMODE_STEREO, 0)
+            .fmod_result()?;
 
         log::info!("successfully initialized fmod system, samplerate: {SYSTEM_SAMPLERATE}");
+        Ok(())
     }
 
     pub fn init(&mut self) {
@@ -954,7 +951,11 @@ impl Bot {
 
         // init audio playback
         self.maybe_init_kittyaudio();
-        unsafe { self.init_fmod() };
+        unsafe {
+            let _ = self
+                .init_fmod()
+                .map_err(|e| log::error!("failed to init fmod: {e}"));
+        };
 
         // reload clickpacks
         let _ = self
@@ -1432,12 +1433,11 @@ impl Bot {
     }
 
     fn get_device(&mut self) -> Device {
-        if !self.conf.selected_device.is_empty() {
-            self.selected_device = self.conf.selected_device.clone();
-            Device::from_name(&self.conf.selected_device).unwrap_or_default()
+        if !self.env.selected_device.is_empty() && cfg!(feature = "special") {
+            Device::from_name(&self.env.selected_device).unwrap_or_default()
         } else {
             log::debug!("using default device");
-            self.selected_device = Device::Default.name().unwrap_or_default();
+            self.env.selected_device = Device::Default.name().unwrap_or_default();
             Device::Default
         }
     }
@@ -1483,13 +1483,13 @@ impl Bot {
     fn show_device_switcher(&mut self, ui: &mut egui::Ui, toasts: &mut Toasts) {
         ui.horizontal(|ui| {
             egui::ComboBox::from_label("Output device")
-                .selected_text(&self.selected_device)
+                .selected_text(&self.env.selected_device)
                 .show_ui(ui, |ui| {
                     let devices = self.devices.lock().unwrap().clone();
                     for device in &devices {
-                        let is_selected = &self.selected_device == device;
+                        let is_selected = &self.env.selected_device == device;
                         if ui
-                            .selectable_value(&mut self.selected_device, device.clone(), device)
+                            .selectable_value(&mut self.env.selected_device, device.clone(), device)
                             .clicked()
                             && !is_selected
                         {
@@ -1497,6 +1497,7 @@ impl Bot {
                             log::info!("switching audio device to \"{device}\"");
                             self.maybe_init_kittyaudio();
                             self.play_noise(true);
+                            self.env.save();
                             toasts.add(Toast {
                                 kind: ToastKind::Success,
                                 text: format!("Switched device to \"{device}\"").into(),
@@ -1515,7 +1516,7 @@ impl Bot {
                 self.mixer = Mixer::new();
                 self.mixer.init();
                 if let Ok(name) = Device::Default.name() {
-                    self.selected_device = name.clone();
+                    self.env.selected_device = name.clone();
                     toasts.add(Toast {
                         kind: ToastKind::Success,
                         text: format!("Switched device to \"{name}\"").into(),
@@ -1523,6 +1524,7 @@ impl Bot {
                     });
                 }
                 self.play_noise(true);
+                self.env.save();
                 log::debug!("reset audio device");
             }
         });

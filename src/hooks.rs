@@ -18,9 +18,6 @@ type FnQuit = unsafe extern "fastcall" fn(PlayLayer, Ptr);
 
 type FnReset = unsafe extern "fastcall" fn(PlayLayer, Ptr);
 
-/// CCLayer, edx, GJGameLevel
-type FnInitFMOD = unsafe extern "fastcall" fn(Ptr, Ptr, Ptr) -> bool;
-
 /// called on each frame
 type FnUpdate = unsafe extern "fastcall" fn(PlayLayer, Ptr, f32);
 
@@ -32,7 +29,6 @@ static_detour! {
     static Init: unsafe extern "fastcall" fn(PlayLayer, Ptr, Ptr) -> bool;
     static Quit: unsafe extern "fastcall" fn(PlayLayer, Ptr);
     static Reset: unsafe extern "fastcall" fn(PlayLayer, Ptr);
-    static InitFMOD: unsafe extern "fastcall" fn(Ptr, Ptr, Ptr) -> bool;
     static Update: unsafe extern "fastcall" fn(PlayLayer, Ptr, f32);
 }
 
@@ -111,11 +107,6 @@ fn reset(playlayer: PlayLayer, _edx: Ptr) {
 
     log::debug!("reset");
     unsafe { BOT.on_reset() };
-}
-
-fn init_fmod(cclayer: Ptr, _edx: Ptr, gamelevel: Ptr) -> bool {
-    log::info!("init fmod h");
-    unsafe { InitFMOD.call(cclayer, 0, gamelevel) }
 }
 
 fn update(playlayer: PlayLayer, _edx: Ptr, dt: f32) {

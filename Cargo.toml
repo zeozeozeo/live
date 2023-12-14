@@ -9,9 +9,9 @@ build = "build.rs"
 crate-type = ["cdylib"]
 
 [profile.release]
-# lto = "fat"
-# codegen-units = 1
-# strip = true
+lto = "fat"
+codegen-units = 1
+strip = true
 
 [workspace]
 members = [".", "egui_gl_hook"]
@@ -23,7 +23,7 @@ anyhow = "1.0.75"
 egui = "0.24.1"
 egui-keybind = { version = "0.2.4", features = ["serde"] }
 egui-modal = "0.3.1"
-egui-toast = { git = "https://github.com/zeozeozeo/egui-toast.git", branch = "egui-0.24.1" }
+egui-toast = "0.10.1"
 egui_gl_hook = { path = "egui_gl_hook" }
 geometrydash = { path = "../../geometrydash" }
 kittyaudio = "0.1.6"
