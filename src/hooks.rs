@@ -1,5 +1,6 @@
 use crate::BOT;
 use geometrydash::{get_base, patch_mem, AddressUtils, GameManager, PlayLayer, PlayerObject, Ptr};
+use minhook::MinHook;
 use retour::static_detour;
 use std::ffi::c_void;
 
@@ -157,6 +158,25 @@ pub fn anticheat_bypass() {
     patch!(get_base() + 0x20c4e6, &[0xe9, 0xd7, 0x00, 0x00, 0x00, 0x90]);
 }
 
+macro_rules! hook {
+    ($typ:ty, $static:expr, $detour:expr, $addr:expr, $use_retour:expr) => {
+        let hooked_fn = ::std::mem::transmute::<_, $typ>(::geometrydash::get_base() + $addr);
+        if $use_retour {
+            $static
+                .initialize(hooked_fn, $detour)
+                .expect(stringify!(failed to hook $static));
+            $static
+                .enable()
+                .expect(stringify!(failed to enable $static hook));
+        } else {
+            let target = ::minhook::MinHook::create_hook($addr as _, hooked_fn as _)
+                .expect(stringify!(failed to hook $static));
+            ::minhook::MinHook::enable_hook(target)
+                .expect(stringify!(failed to enable $static hook));
+        }
+    };
+}
+
 pub unsafe fn init_hooks() {
     use std::mem::transmute;
     if unsafe { BOT.conf.hook_wait } {
@@ -165,6 +185,7 @@ pub unsafe fn init_hooks() {
     anticheat_bypass();
 
     let alternate = unsafe { BOT.conf.use_alternate_hook };
+    let use_retour = true;
 
     if !alternate {
         // pushbutton
@@ -175,6 +196,7 @@ pub unsafe fn init_hooks() {
         PushButton
             .enable()
             .expect("failed to enable PushButton hook");
+        hook!(FnPushButton, PushButton, push_button, 0x1F4E40, use_retour);
 
         // releasebutton (same type as FnPushButton)
         let release_button_fn: FnReleaseButton = transmute(get_base() + 0x1F4F70);
