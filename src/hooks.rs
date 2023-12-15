@@ -1,6 +1,5 @@
 use crate::BOT;
 use geometrydash::{get_base, patch_mem, AddressUtils, GameManager, PlayLayer, PlayerObject, Ptr};
-use minhook::MinHook;
 use retour::static_detour;
 use std::ffi::c_void;
 
@@ -178,70 +177,52 @@ macro_rules! hook {
 }
 
 pub unsafe fn init_hooks() {
-    use std::mem::transmute;
     if unsafe { BOT.conf.hook_wait } {
         std::thread::sleep(std::time::Duration::from_secs(3));
     }
     anticheat_bypass();
 
     let alternate = unsafe { BOT.conf.use_alternate_hook };
-    let use_retour = true;
+    let use_retour = false;
 
     if !alternate {
         // pushbutton
-        let push_button_fn: FnPushButton = transmute(get_base() + 0x1F4E40);
-        PushButton
-            .initialize(push_button_fn, push_button)
-            .expect("failed to hook PushButton");
-        PushButton
-            .enable()
-            .expect("failed to enable PushButton hook");
         hook!(FnPushButton, PushButton, push_button, 0x1F4E40, use_retour);
-
-        // releasebutton (same type as FnPushButton)
-        let release_button_fn: FnReleaseButton = transmute(get_base() + 0x1F4F70);
-        ReleaseButton
-            .initialize(release_button_fn, release_button)
-            .expect("failed to hook ReleaseButton");
-        ReleaseButton
-            .enable()
-            .expect("failed to enable ReleaseButton hook");
+        hook!(
+            FnReleaseButton,
+            ReleaseButton,
+            release_button,
+            0x1F4F70,
+            use_retour
+        );
     } else {
         // pushbutton2
-        let push_button_fn2: FnPushButton2 = transmute(get_base() + 0x111500);
-        PushButton2
-            .initialize(push_button_fn2, push_button2)
-            .expect("failed to hook PushButton2");
-        PushButton2
-            .enable()
-            .expect("failed to enable PushButton2 hook");
+        hook!(
+            FnPushButton2,
+            PushButton2,
+            push_button2,
+            0x111500,
+            use_retour
+        );
 
         // releasebutton2 (same type as FnPushButton2)
-        let release_button_fn2: FnReleaseButton2 = transmute(get_base() + 0x111660);
-        ReleaseButton2
-            .initialize(release_button_fn2, release_button2)
-            .expect("failed to hook ReleaseButton2");
-        ReleaseButton2
-            .enable()
-            .expect("failed to enable ReleaseButton2 hook");
+        hook!(
+            FnReleaseButton2,
+            PushButton2,
+            release_button2,
+            0x111660,
+            use_retour
+        );
     }
 
     // init
-    let init_fn: FnInit = transmute(get_base() + 0x1fb780);
-    Init.initialize(init_fn, init).expect("failed to hook Init");
-    Init.enable().expect("failed to enable Init hook");
+    hook!(FnInit, Init, init, 0x1fb780, use_retour);
 
     // quit
-    let quit_fn: FnQuit = transmute(get_base() + 0x20D810);
-    Quit.initialize(quit_fn, quit).expect("failed to hook Quit");
-    Quit.enable().expect("failed to enable Quit hook");
+    hook!(FnQuit, Quit, quit, 0x20D810, use_retour);
 
     // reset
-    let reset_fn: FnReset = transmute(get_base() + 0x20BF00);
-    Reset
-        .initialize(reset_fn, reset)
-        .expect("failed to hook Reset");
-    Reset.enable().expect("failed to enable Reset hook");
+    hook!(FnReset, Reset, reset, 0x20BF00, use_retour);
 
     // initfmod
     // let init_fmod_fn: FnInitFMOD = transmute(get_base() + 0x01FB780);
@@ -251,18 +232,10 @@ pub unsafe fn init_hooks() {
     // InitFMOD.enable().expect("failed to enable InitFMOD hook");
 
     // update
-    let update_fn: FnUpdate = transmute(get_base() + 0x2029C0);
-    Update
-        .initialize(update_fn, update)
-        .expect("failed to hook Update");
-    Update.enable().expect("failed to enable Update hook");
+    hook!(FnUpdate, Update, update, 0x2029C0, use_retour);
 
     // oneditor
-    let on_editor_fn: FnOnEditor = transmute(get_base() + 0x1E60E0);
-    OnEditor
-        .initialize(on_editor_fn, on_editor)
-        .expect("failed to hook OnEditor");
-    OnEditor.enable().expect("failed to enable OnEditor hook");
+    hook!(FnOnEditor, OnEditor, on_editor, 0x1E60E0, use_retour);
 }
 
 pub unsafe fn disable_hooks() {
