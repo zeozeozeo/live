@@ -3,27 +3,6 @@ use geometrydash::{get_base, patch_mem, AddressUtils, GameManager, PlayLayer, Pl
 use retour::static_detour;
 use std::ffi::c_void;
 
-// pushButton/releaseButton methods that take [PlayerObject].
-
-type FnPushButton = unsafe extern "fastcall" fn(PlayerObject, Ptr, i32) -> bool;
-type FnReleaseButton = unsafe extern "fastcall" fn(PlayerObject, Ptr, i32) -> bool;
-
-type FnPushButton2 = unsafe extern "fastcall" fn(PlayLayer, Ptr, i32, bool) -> u32;
-type FnReleaseButton2 = unsafe extern "fastcall" fn(PlayLayer, Ptr, i32, bool) -> u32;
-
-/// called when entering a level.
-type FnInit = unsafe extern "fastcall" fn(PlayLayer, Ptr, Ptr) -> bool;
-
-/// called when exiting from a level.
-type FnQuit = unsafe extern "fastcall" fn(PlayLayer, Ptr);
-
-type FnReset = unsafe extern "fastcall" fn(PlayLayer, Ptr);
-
-/// called on each frame
-type FnUpdate = unsafe extern "fastcall" fn(PlayLayer, Ptr, f32);
-
-type FnOnEditor = unsafe extern "fastcall" fn(PlayLayer, Ptr, Ptr) -> *const c_void;
-
 static_detour! {
     static PushButton: unsafe extern "fastcall" fn(PlayerObject, Ptr, i32) -> bool;
     static ReleaseButton: unsafe extern "fastcall" fn(PlayerObject, Ptr, i32) -> bool;
@@ -34,7 +13,6 @@ static_detour! {
     static Reset: unsafe extern "fastcall" fn(PlayLayer, Ptr);
     static Update: unsafe extern "fastcall" fn(PlayLayer, Ptr, f32);
     static OnEditor: unsafe extern "fastcall" fn(PlayLayer, Ptr, Ptr) -> *const c_void;
-
 }
 
 fn push_button(player: PlayerObject, _edx: Ptr, button: i32) -> bool {
@@ -120,6 +98,7 @@ fn update(playlayer: PlayLayer, _edx: Ptr, dt: f32) {
         unsafe { BOT.on_init() };
     }
     unsafe { BOT.playlayer = playlayer };
+    unsafe { BOT.on_update() };
     unsafe { Update.call(playlayer, 0, dt) };
 }
 
@@ -158,19 +137,17 @@ pub fn anticheat_bypass() {
 }
 
 macro_rules! hook {
-    ($typ:ty, $static:expr, $detour:expr, $addr:expr, $use_retour:expr) => {
-        let hooked_fn = ::std::mem::transmute::<_, $typ>(::geometrydash::get_base() + $addr);
-        if $use_retour {
+    ($static:expr, $detour:expr, $addr:expr) => {
+        let addr = ::geometrydash::get_base() + $addr;
+        if unsafe { BOT.conf.use_minhook } {
+            ::minhook::MinHook::create_hook(addr as _, $detour as _)
+                .expect(stringify!(failed to hook $static));
+        } else {
             $static
-                .initialize(hooked_fn, $detour)
+                .initialize(::std::mem::transmute(addr), $detour)
                 .expect(stringify!(failed to hook $static));
             $static
                 .enable()
-                .expect(stringify!(failed to enable $static hook));
-        } else {
-            let target = ::minhook::MinHook::create_hook($addr as _, hooked_fn as _)
-                .expect(stringify!(failed to hook $static));
-            ::minhook::MinHook::enable_hook(target)
                 .expect(stringify!(failed to enable $static hook));
         }
     };
@@ -183,59 +160,25 @@ pub unsafe fn init_hooks() {
     anticheat_bypass();
 
     let alternate = unsafe { BOT.conf.use_alternate_hook };
-    let use_retour = false;
+    let use_retour = !unsafe { BOT.conf.use_minhook };
 
     if !alternate {
-        // pushbutton
-        hook!(FnPushButton, PushButton, push_button, 0x1F4E40, use_retour);
-        hook!(
-            FnReleaseButton,
-            ReleaseButton,
-            release_button,
-            0x1F4F70,
-            use_retour
-        );
+        hook!(PushButton, push_button, 0x1F4E40);
+        hook!(ReleaseButton, release_button, 0x1F4F70);
     } else {
-        // pushbutton2
-        hook!(
-            FnPushButton2,
-            PushButton2,
-            push_button2,
-            0x111500,
-            use_retour
-        );
-
-        // releasebutton2 (same type as FnPushButton2)
-        hook!(
-            FnReleaseButton2,
-            PushButton2,
-            release_button2,
-            0x111660,
-            use_retour
-        );
+        hook!(PushButton2, push_button2, 0x111500);
+        hook!(PushButton2, release_button2, 0x111660);
     }
 
-    // init
-    hook!(FnInit, Init, init, 0x1fb780, use_retour);
+    hook!(Init, init, 0x1fb780);
+    hook!(Quit, quit, 0x20D810);
+    hook!(Reset, reset, 0x20BF00);
+    hook!(Update, update, 0x2029C0);
+    hook!(OnEditor, on_editor, 0x1E60E0);
 
-    // quit
-    hook!(FnQuit, Quit, quit, 0x20D810, use_retour);
-
-    // reset
-    hook!(FnReset, Reset, reset, 0x20BF00, use_retour);
-
-    // initfmod
-    // let init_fmod_fn: FnInitFMOD = transmute(get_base() + 0x01FB780);
-    // InitFMOD
-    //     .initialize(init_fmod_fn, init_fmod)
-    //     .expect("failed to hook InitFMOD");
-    // InitFMOD.enable().expect("failed to enable InitFMOD hook");
-
-    // update
-    hook!(FnUpdate, Update, update, 0x2029C0, use_retour);
-
-    // oneditor
-    hook!(FnOnEditor, OnEditor, on_editor, 0x1E60E0, use_retour);
+    if !use_retour {
+        unsafe { minhook::MinHook::enable_all_hooks().expect("failed to enable hooks") };
+    }
 }
 
 pub unsafe fn disable_hooks() {
@@ -264,4 +207,6 @@ pub unsafe fn disable_hooks() {
         unsafe { Update.disable() }.map_err(|e| log::error!("failed to disable Update hook: {e}"));
     let _ = unsafe { OnEditor.disable() }
         .map_err(|e| log::error!("failed to disable OnEditor hook: {e}"));
+
+    // minhook::MinHook::uninitialize();
 }

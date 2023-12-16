@@ -1,5 +1,6 @@
 use crate::{
     hooks,
+    replay::{Frame, Replay},
     utils::{self, IntoFmodResult},
 };
 use anyhow::Result;
@@ -630,6 +631,11 @@ pub struct Config {
     pub noise_speedhack: f64,
     #[serde(default = "bool::default")]
     pub hook_wait: bool,
+    #[serde(default = "bool::default")]
+    pub use_minhook: bool,
+    #[cfg(feature = "special")]
+    #[serde(default = "usize::default")]
+    pub echo_delay: usize,
 }
 
 impl Config {
@@ -663,6 +669,8 @@ impl Default for Config {
             noise_speedhack: 1.0,
             // sync_speed_with_game: true,
             hook_wait: false,
+            use_minhook: false,
+            echo_delay: 0,
         }
     }
 }
@@ -1086,6 +1094,24 @@ impl Bot {
 
     pub fn on_reset(&mut self) {
         self.level_start = Instant::now();
+    }
+
+    fn get_echo_frame(&self) -> usize {
+        if self.playlayer.is_null() {
+            return 0;
+        }
+        (self.playlayer.time() * utils::get_echo_fps() as f64) as usize
+    }
+
+    fn get_echo_execute_action(&self) -> Option<Frame> {
+        let frame = self.get_echo_frame() + self.conf.echo_delay;
+        Replay::search_action(frame)
+    }
+
+    pub fn on_update(&self) {
+        if let Some(frame) = self.get_echo_execute_action() {
+            log::info!("execute action {frame:?}");
+        }
     }
 
     pub fn on_action(&mut self, push: bool, player2: bool) {
@@ -1949,6 +1975,12 @@ impl Bot {
     }
 
     fn show_clickpack_window(&mut self, ui: &mut egui::Ui, modal: Arc<Mutex<Modal>>) {
+        ui.label(format!(
+            "Echo macro name: {}, replay pos: {}",
+            utils::get_echo_macro_name().unwrap_or_default(),
+            crate::replay::Replay::replay_pos(),
+        ));
+
         if self.is_loading_clickpack {
             ui.horizontal(|ui| {
                 ui.label("Loading clickpack...");
