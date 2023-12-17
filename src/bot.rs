@@ -1,5 +1,6 @@
 use crate::{
     hooks,
+    replay::{Frame, Replay},
     utils::{self, IntoFmodResult},
 };
 use anyhow::Result;
@@ -1153,6 +1154,24 @@ impl Bot {
         self.level_start = Instant::now();
     }
 
+    fn get_echo_frame(&self) -> usize {
+        if self.playlayer.is_null() {
+            return 0;
+        }
+        (self.playlayer.time() * utils::get_echo_fps() as f64) as usize
+    }
+
+    fn get_echo_execute_action(&self) -> Option<Frame> {
+        let frame = self.get_echo_frame() + self.conf.echo_delay;
+        Replay::search_action(frame)
+    }
+
+    pub fn on_update(&self) {
+        if let Some(frame) = self.get_echo_execute_action() {
+            log::info!("execute action {frame:?}");
+        }
+    }
+
     pub fn on_action(&mut self, push: bool, player2: bool) {
         if self.num_sounds == (0, 0) || self.playlayer.is_null() || !self.conf.enabled {
             return;
@@ -2049,6 +2068,12 @@ impl Bot {
     }
 
     fn show_clickpack_window(&mut self, ui: &mut egui::Ui, modal: Arc<Mutex<Modal>>) {
+        ui.label(format!(
+            "Echo macro name: {}, replay pos: {}",
+            utils::get_echo_macro_name().unwrap_or_default(),
+            crate::replay::Replay::replay_pos(),
+        ));
+
         if self.is_loading_clickpack {
             ui.horizontal(|ui| {
                 ui.label("Loading clickpack...");

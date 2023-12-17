@@ -252,6 +252,8 @@ pub unsafe fn init_hooks() {
     if !alternate {
         hook!(PushButton, push_button, 0x1F4E40);
         hook!(ReleaseButton, release_button, 0x1F4F70);
+        hook!(PushButton, push_button, 0x1F4E40);
+        hook!(ReleaseButton, release_button, 0x1F4F70);
     } else {
         hook!(PushButton2, push_button2, 0x111500);
         hook!(ReleaseButton2, release_button2, 0x111660);

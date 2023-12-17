@@ -1,0 +1,3 @@
+C:\Games\Geometry.Dash.v07.24.2021\GDMenu\dll
+C:\Games\Geometry.Dash.v07.24.2021\
+release
