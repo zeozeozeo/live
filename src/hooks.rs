@@ -3,25 +3,14 @@ use geometrydash::{get_base, patch_mem, AddressUtils, GameManager, PlayLayer, Pl
 use retour::static_detour;
 use std::ffi::c_void;
 
-// pushButton/releaseButton methods that take [PlayerObject].
-
 type FnPushButton = unsafe extern "fastcall" fn(PlayerObject, Ptr, i32) -> bool;
 type FnReleaseButton = unsafe extern "fastcall" fn(PlayerObject, Ptr, i32) -> bool;
-
 type FnPushButton2 = unsafe extern "fastcall" fn(PlayLayer, Ptr, i32, bool) -> u32;
 type FnReleaseButton2 = unsafe extern "fastcall" fn(PlayLayer, Ptr, i32, bool) -> u32;
-
-/// called when entering a level.
 type FnInit = unsafe extern "fastcall" fn(PlayLayer, Ptr, Ptr) -> bool;
-
-/// called when exiting from a level.
 type FnQuit = unsafe extern "fastcall" fn(PlayLayer, Ptr);
-
 type FnReset = unsafe extern "fastcall" fn(PlayLayer, Ptr);
-
-/// called on each frame
 type FnUpdate = unsafe extern "fastcall" fn(PlayLayer, Ptr, f32);
-
 type FnOnEditor = unsafe extern "fastcall" fn(PlayLayer, Ptr, Ptr) -> *const c_void;
 
 static_detour! {
@@ -34,22 +23,63 @@ static_detour! {
     static Reset: unsafe extern "fastcall" fn(PlayLayer, Ptr);
     static Update: unsafe extern "fastcall" fn(PlayLayer, Ptr, f32);
     static OnEditor: unsafe extern "fastcall" fn(PlayLayer, Ptr, Ptr) -> *const c_void;
-
 }
 
-fn push_button(player: PlayerObject, _edx: Ptr, button: i32) -> bool {
-    let res = unsafe { PushButton.call(player, 0, button) };
-    // log::info!("pushbutton: {button}, ");
+macro_rules! make_minhook_statics {
+    ($($static:ident),+) => {
+        $(
+            #[allow(non_upper_case_globals)]
+            static mut $static: *mut ::std::ffi::c_void = 0 as _;
+        )*
+    };
+}
+
+make_minhook_statics!(
+    PushButton_MinHook,
+    ReleaseButton_MinHook,
+    PushButton2_MinHook,
+    ReleaseButton2_MinHook,
+    Init_MinHook,
+    Quit_MinHook,
+    Reset_MinHook,
+    Update_MinHook,
+    OnEditor_MinHook
+);
+
+/// Create a function wrapper without a specified calling convention
+macro_rules! make_retour_fn {
+    ($name:ident, $retour_name:ident($($($n:ident: $t:ty),+)?) $(-> $ret:ty)?) => {
+        fn $retour_name($($($n: $t),+)?) $(-> $ret)? {
+            unsafe { $name($($($n),+)?) }
+        }
+    };
+}
+
+macro_rules! call_hook {
+    ($static:ident($($arg:expr),+), $typ:ty) => {
+        if unsafe { BOT.used_minhook } {
+            unsafe { ::std::mem::transmute::<*mut ::std::ffi::c_void, $typ>(concat_idents!($static, _MinHook))($($arg),+) }
+        } else {
+            unsafe { $static.call($($arg),+) }
+        }
+    };
+}
+
+unsafe extern "fastcall" fn push_button(player: PlayerObject, _edx: Ptr, button: i32) -> bool {
+    let res = call_hook!(PushButton(player, 0, button), FnPushButton);
     unsafe { BOT.on_action(true, BOT.is_player2_obj(player)) };
     res
 }
 
-fn release_button(player: PlayerObject, _edx: Ptr, button: i32) -> bool {
-    let res = unsafe { ReleaseButton.call(player, 0, button) };
-    // log::info!("releasebutton: {button}");
+make_retour_fn!(push_button, push_button_retour(player: PlayerObject, _edx: Ptr, button: i32) -> bool);
+
+unsafe extern "fastcall" fn release_button(player: PlayerObject, _edx: Ptr, button: i32) -> bool {
+    let res = call_hook!(ReleaseButton(player, 0, button), FnReleaseButton);
     unsafe { BOT.on_action(false, BOT.is_player2_obj(player)) };
     res
 }
+
+make_retour_fn!(release_button, release_button_retour(player: PlayerObject, _edx: Ptr, button: i32) -> bool);
 
 #[inline]
 fn is_player1(playlayer: PlayLayer, button: bool) -> bool {
@@ -58,8 +88,13 @@ fn is_player1(playlayer: PlayLayer, button: bool) -> bool {
     !is2player || (button ^ flip)
 }
 
-fn push_button2(playlayer: PlayLayer, _edx: Ptr, param: i32, button: bool) -> u32 {
-    let res = unsafe { PushButton2.call(playlayer, 0, param, button) };
+unsafe extern "fastcall" fn push_button2(
+    playlayer: PlayLayer,
+    _edx: Ptr,
+    param: i32,
+    button: bool,
+) -> u32 {
+    let res = call_hook!(PushButton2(playlayer, 0, param, button), FnPushButton2);
     if unsafe { BOT.playlayer.is_null() } && !playlayer.is_null() {
         log::debug!("push2 init");
         unsafe { BOT.on_init() };
@@ -72,8 +107,18 @@ fn push_button2(playlayer: PlayLayer, _edx: Ptr, param: i32, button: bool) -> u3
     res
 }
 
-fn release_button2(playlayer: PlayLayer, _edx: Ptr, param: i32, button: bool) -> u32 {
-    let res = unsafe { ReleaseButton2.call(playlayer, 0, param, button) };
+make_retour_fn!(push_button2, push_button2_retour(playlayer: PlayLayer, _edx: Ptr, param: i32, button: bool) -> u32);
+
+unsafe extern "fastcall" fn release_button2(
+    playlayer: PlayLayer,
+    _edx: Ptr,
+    param: i32,
+    button: bool,
+) -> u32 {
+    let res = call_hook!(
+        ReleaseButton2(playlayer, 0, param, button),
+        FnReleaseButton2
+    );
     if unsafe { BOT.playlayer.is_null() } && !playlayer.is_null() {
         log::debug!("release2 init");
         unsafe { BOT.on_init() };
@@ -86,23 +131,29 @@ fn release_button2(playlayer: PlayLayer, _edx: Ptr, param: i32, button: bool) ->
     res
 }
 
-fn init(playlayer: PlayLayer, _edx: Ptr, level: Ptr) -> bool {
-    let res = unsafe { Init.call(playlayer, 0, level) };
+make_retour_fn!(release_button2, release_button2_retour(playlayer: PlayLayer, _edx: Ptr, param: i32, button: bool) -> u32);
+
+unsafe extern "fastcall" fn init(playlayer: PlayLayer, _edx: Ptr, level: Ptr) -> bool {
+    let res = call_hook!(Init(playlayer, 0, level), FnInit);
     log::debug!("init");
     unsafe { BOT.playlayer = playlayer };
     unsafe { BOT.on_init() };
     res
 }
 
-fn quit(playlayer: PlayLayer, _edx: Ptr) {
-    unsafe { Quit.call(playlayer, 0) };
+make_retour_fn!(init, init_retour(playlayer: PlayLayer, _edx: Ptr, level: Ptr) -> bool);
+
+unsafe extern "fastcall" fn quit(playlayer: PlayLayer, _edx: Ptr) {
+    call_hook!(Quit(playlayer, 0), FnQuit);
 
     // set playlayer to null
     unsafe { BOT.playlayer = PlayLayer::from_address(0) };
 }
 
-fn reset(playlayer: PlayLayer, _edx: Ptr) {
-    unsafe { Reset.call(playlayer, 0) };
+make_retour_fn!(quit, quit_retour(playlayer: PlayLayer, _edx: Ptr));
+
+unsafe extern "fastcall" fn reset(playlayer: PlayLayer, _edx: Ptr) {
+    call_hook!(Reset(playlayer, 0), FnReset);
 
     if unsafe { BOT.playlayer.is_null() } && !playlayer.is_null() {
         log::debug!("reset init");
@@ -114,19 +165,30 @@ fn reset(playlayer: PlayLayer, _edx: Ptr) {
     unsafe { BOT.on_reset() };
 }
 
-fn update(playlayer: PlayLayer, _edx: Ptr, dt: f32) {
+make_retour_fn!(reset, reset_retour(playlayer: PlayLayer, _edx: Ptr));
+
+unsafe extern "fastcall" fn update(playlayer: PlayLayer, _edx: Ptr, dt: f32) {
     if unsafe { BOT.playlayer.is_null() } && !playlayer.is_null() {
         log::debug!("update init");
         unsafe { BOT.on_init() };
     }
     unsafe { BOT.playlayer = playlayer };
-    unsafe { Update.call(playlayer, 0, dt) };
+
+    call_hook!(Update(playlayer, 0, dt), FnUpdate);
 }
 
-fn on_editor(playlayer: PlayLayer, _edx: Ptr, param: Ptr) -> *const c_void {
+make_retour_fn!(update, update_retour(playlayer: PlayLayer, _edx: Ptr, dt: f32));
+
+unsafe extern "fastcall" fn on_editor(
+    playlayer: PlayLayer,
+    _edx: Ptr,
+    param: Ptr,
+) -> *const c_void {
     unsafe { BOT.playlayer = PlayLayer::from_address(0) };
-    unsafe { OnEditor.call(playlayer, 0, param) }
+    call_hook!(OnEditor(playlayer, 0, param), FnOnEditor)
 }
+
+make_retour_fn!(on_editor, on_editor_retour(playlayer: PlayLayer, _edx: Ptr, param: Ptr) -> *const c_void);
 
 macro_rules! patch {
     ($addr:expr, $data:expr) => {
@@ -137,7 +199,7 @@ macro_rules! patch {
 }
 
 pub fn anticheat_bypass() {
-    log::trace!("activating anticheat bypass");
+    log::info!("activating anticheat bypass");
     patch!(get_base() + 0x202aaa, &[0xeb, 0x2e]);
     patch!(get_base() + 0x15fc2e, &[0xeb]);
     patch!(get_base() + 0x1fd557, &[0xeb, 0x0c]);
@@ -158,19 +220,22 @@ pub fn anticheat_bypass() {
 }
 
 macro_rules! hook {
-    ($typ:ty, $static:expr, $detour:expr, $addr:expr, $use_retour:expr) => {
-        let hooked_fn = ::std::mem::transmute::<_, $typ>(::geometrydash::get_base() + $addr);
-        if $use_retour {
+    ($static:ident, $detour:ident, $addr:expr) => {
+        let addr = ::geometrydash::get_base() + $addr;
+        if unsafe { BOT.used_minhook } {
+            ::log::info!("creating minhook hook: {} -> {:#x}", stringify!($static), $addr);
+            concat_idents!($static, _MinHook) = ::std::mem::transmute(
+                ::minhook::MinHook::create_hook(addr as _, $detour as _)
+                    .expect(stringify!(failed to hook $static))
+            );
+        } else {
+            ::log::info!("initializing retour hook: {} -> {:#x}", stringify!($static), $addr);
             $static
-                .initialize(hooked_fn, $detour)
+                .initialize(::std::mem::transmute(addr), concat_idents!($detour, _retour))
                 .expect(stringify!(failed to hook $static));
+            ::log::info!("enabling retour hook: {} -> {:#x}", stringify!($static), $addr);
             $static
                 .enable()
-                .expect(stringify!(failed to enable $static hook));
-        } else {
-            let target = ::minhook::MinHook::create_hook($addr as _, hooked_fn as _)
-                .expect(stringify!(failed to hook $static));
-            ::minhook::MinHook::enable_hook(target)
                 .expect(stringify!(failed to enable $static hook));
         }
     };
@@ -178,90 +243,61 @@ macro_rules! hook {
 
 pub unsafe fn init_hooks() {
     if unsafe { BOT.conf.hook_wait } {
-        std::thread::sleep(std::time::Duration::from_secs(3));
+        std::thread::sleep(std::time::Duration::from_secs(2));
     }
     anticheat_bypass();
 
     let alternate = unsafe { BOT.conf.use_alternate_hook };
-    let use_retour = false;
 
     if !alternate {
-        // pushbutton
-        hook!(FnPushButton, PushButton, push_button, 0x1F4E40, use_retour);
-        hook!(
-            FnReleaseButton,
-            ReleaseButton,
-            release_button,
-            0x1F4F70,
-            use_retour
-        );
+        hook!(PushButton, push_button, 0x1F4E40);
+        hook!(ReleaseButton, release_button, 0x1F4F70);
     } else {
-        // pushbutton2
-        hook!(
-            FnPushButton2,
-            PushButton2,
-            push_button2,
-            0x111500,
-            use_retour
-        );
-
-        // releasebutton2 (same type as FnPushButton2)
-        hook!(
-            FnReleaseButton2,
-            PushButton2,
-            release_button2,
-            0x111660,
-            use_retour
-        );
+        hook!(PushButton2, push_button2, 0x111500);
+        hook!(ReleaseButton2, release_button2, 0x111660);
     }
 
-    // init
-    hook!(FnInit, Init, init, 0x1fb780, use_retour);
+    hook!(Init, init, 0x1fb780);
+    hook!(Quit, quit, 0x20D810);
+    hook!(Reset, reset, 0x20BF00);
+    hook!(Update, update, 0x2029C0);
+    hook!(OnEditor, on_editor, 0x1E60E0);
 
-    // quit
-    hook!(FnQuit, Quit, quit, 0x20D810, use_retour);
+    if unsafe { BOT.used_minhook } {
+        log::info!("enabling all minhook hooks");
+        unsafe { minhook::MinHook::enable_all_hooks().expect("failed to enable hooks") };
+    }
+}
 
-    // reset
-    hook!(FnReset, Reset, reset, 0x20BF00, use_retour);
-
-    // initfmod
-    // let init_fmod_fn: FnInitFMOD = transmute(get_base() + 0x01FB780);
-    // InitFMOD
-    //     .initialize(init_fmod_fn, init_fmod)
-    //     .expect("failed to hook InitFMOD");
-    // InitFMOD.enable().expect("failed to enable InitFMOD hook");
-
-    // update
-    hook!(FnUpdate, Update, update, 0x2029C0, use_retour);
-
-    // oneditor
-    hook!(FnOnEditor, OnEditor, on_editor, 0x1E60E0, use_retour);
+macro_rules! disable_hooks {
+    ($($static:ident),+) => {
+        $(
+            if unsafe { BOT.used_minhook } {
+                log::info!("disabling {} minhook hook", stringify!($static));
+                let _ = ::minhook::MinHook::disable_hook(::std::mem::transmute(concat_idents!($static, _MinHook)))
+                    .map_err(|e| log::error!("failed to disable {} minhook hook: {e:?}", stringify!($static)));
+            } else {
+                log::info!("disabling {} retour hook", stringify!($static));
+                let _ = unsafe { $static.disable() }
+                    .map_err(|e| log::error!("failed to disable {} hook: {e}", stringify!($static)));
+            }
+        )*
+    };
 }
 
 pub unsafe fn disable_hooks() {
-    log::debug!("disabling hooks");
-    let alternate = unsafe { BOT.used_alternate_hook };
+    log::info!("disabling hooks");
 
-    if !alternate {
-        let _ = unsafe { PushButton.disable() }
-            .map_err(|e| log::error!("failed to disable PushButton hook: {e}"));
-        let _ = unsafe { ReleaseButton.disable() }
-            .map_err(|e| log::error!("failed to disable ReleaseButton hook: {e}"));
+    if unsafe { BOT.used_alternate_hook } {
+        disable_hooks!(PushButton2, ReleaseButton2);
     } else {
-        let _ = unsafe { PushButton2.disable() }
-            .map_err(|e| log::error!("failed to disable PushButton2 hook: {e}"));
-        let _ = unsafe { ReleaseButton2.disable() }
-            .map_err(|e| log::error!("failed to disable ReleaseButton2 hook: {e}"));
+        disable_hooks!(PushButton, ReleaseButton);
     }
 
-    let _ = unsafe { Init.disable() }.map_err(|e| log::error!("failed to disable Init hook: {e}"));
-    let _ = unsafe { Quit.disable() }.map_err(|e| log::error!("failed to disable Quit hook: {e}"));
-    let _ =
-        unsafe { Reset.disable() }.map_err(|e| log::error!("failed to disable Reset hook: {e}"));
-    // let _ = unsafe { InitFMOD.disable() }
-    //     .map_err(|e| log::error!("failed to disable InitFMOD hook: {e}"));
-    let _ =
-        unsafe { Update.disable() }.map_err(|e| log::error!("failed to disable Update hook: {e}"));
-    let _ = unsafe { OnEditor.disable() }
-        .map_err(|e| log::error!("failed to disable OnEditor hook: {e}"));
+    disable_hooks!(Init, Quit, Reset, Update, OnEditor);
+
+    if unsafe { BOT.used_minhook } {
+        log::info!("uninitializing minhook");
+        minhook::MinHook::uninitialize();
+    }
 }

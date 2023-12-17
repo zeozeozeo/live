@@ -723,8 +723,7 @@ dependencies = [
 [[package]]
 name = "kittyaudio"
 version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f4743ba2d8bae5201611ad53a43367d623622cfdab02b9631135f7286092002"
+source = "git+https://github.com/zeozeozeo/kittyaudio.git#e3bac2533000be7e947f522cee571ceceb93e383"
 dependencies = [
  "cpal",
  "parking_lot",

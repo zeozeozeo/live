@@ -1,3 +1,5 @@
+#![feature(concat_idents)]
+
 mod bot;
 mod hooks;
 mod utils;

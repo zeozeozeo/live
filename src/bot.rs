@@ -14,10 +14,12 @@ use geometrydash::{
     fmod::{
         FMOD_Channel_SetLoopCount, FMOD_Channel_SetPitch, FMOD_Channel_SetVolume,
         FMOD_Channel_Stop, FMOD_Sound_Release, FMOD_System_Create, FMOD_System_CreateSound,
-        FMOD_System_Init, FMOD_System_PlaySound, FMOD_System_Release,
-        FMOD_System_SetSoftwareFormat, FMOD_System_Update, FMOD_CHANNEL, FMOD_CREATESOUNDEXINFO,
+        FMOD_System_GetDSPBufferSize, FMOD_System_Init, FMOD_System_PlaySound, FMOD_System_Release,
+        FMOD_System_SetDSPBufferSize, FMOD_System_SetSoftwareFormat,
+        FMOD_System_SetStreamBufferSize, FMOD_System_Update, FMOD_CHANNEL, FMOD_CREATESOUNDEXINFO,
         FMOD_INIT_NORMAL, FMOD_LOOP_OFF, FMOD_OPENMEMORY, FMOD_OPENRAW, FMOD_SOUND,
-        FMOD_SOUND_FORMAT_PCMFLOAT, FMOD_SPEAKERMODE_STEREO, FMOD_SYSTEM, FMOD_VERSION,
+        FMOD_SOUND_FORMAT_PCMFLOAT, FMOD_SPEAKERMODE_STEREO, FMOD_SYSTEM, FMOD_TIMEUNIT_PCM,
+        FMOD_VERSION,
     },
     AddressUtils, FMODAudioEngine, PlayLayer, PlayerObject,
 };
@@ -630,6 +632,8 @@ pub struct Config {
     pub noise_speedhack: f64,
     #[serde(default = "bool::default")]
     pub hook_wait: bool,
+    #[serde(default = "bool::default")]
+    pub use_minhook: bool,
 }
 
 impl Config {
@@ -663,6 +667,7 @@ impl Default for Config {
             noise_speedhack: 1.0,
             // sync_speed_with_game: true,
             hook_wait: false,
+            use_minhook: false,
         }
     }
 }
@@ -736,12 +741,17 @@ pub struct Bot {
     pub env: Env,
     pub toast_queue: Arc<Mutex<Vec<Toast>>>,
     pub fmod_noise_sound: *mut FMOD_CHANNEL,
+    pub show_fmod_buffersize_warn: bool,
+    pub startup_buffer_size: u32,
+    pub used_minhook: bool,
 }
 
 impl Default for Bot {
     fn default() -> Self {
         let conf = Config::load().unwrap_or_default().fixup();
         let use_alternate_hook = conf.use_alternate_hook;
+        let startup_buffer_size = conf.buffer_size;
+        let used_minhook = conf.use_minhook;
         Self {
             conf: conf.clone(),
             players: (Sounds::default(), Sounds::default()),
@@ -773,6 +783,9 @@ impl Default for Bot {
             env: Env::load(),
             toast_queue: Arc::new(Mutex::new(vec![])),
             fmod_noise_sound: std::ptr::null_mut(),
+            show_fmod_buffersize_warn: false,
+            startup_buffer_size,
+            used_minhook,
         }
     }
 }
@@ -964,15 +977,65 @@ impl Bot {
     pub unsafe fn init_fmod(&mut self) -> Result<()> {
         const SYSTEM_SAMPLERATE: i32 = 48_000;
         log::info!("initializing fmod system");
+        if !self.system.is_null() {
+            self.release_fmod();
+        }
 
         FMOD_System_Create(&mut self.system, FMOD_VERSION).fmod_result()?;
         let extra_driver_data = FMODAudioEngine::shared().extra_driver_data();
-        FMOD_System_Init(self.system, 2048, FMOD_INIT_NORMAL, extra_driver_data).fmod_result()?;
+
         FMOD_System_SetSoftwareFormat(self.system, SYSTEM_SAMPLERATE, FMOD_SPEAKERMODE_STEREO, 0)
             .fmod_result()?;
 
+        // set buffer size
+        /*
+        FMOD_System_SetStreamBufferSize(self.system, self.conf.buffer_size, FMOD_TIMEUNIT_PCM)
+            .fmod_result()?;
+
+        let mut numbuffers = 0i32;
+        let mut bufferlength = 0u32;
+        FMOD_System_GetDSPBufferSize(self.system, &mut bufferlength, &mut numbuffers)
+            .fmod_result()?;
+        log::info!(
+            "FMOD_System_GetDSPBufferSize: bufferlength: {bufferlength}, numbuffers: {numbuffers}"
+        );
+        FMOD_System_SetDSPBufferSize(self.system, self.conf.buffer_size, numbuffers)
+            .fmod_result()?;
+        */
+
+        // init system
+        self.fmod_apply_buffer_size()?;
+        FMOD_System_Init(self.system, 2048, FMOD_INIT_NORMAL, extra_driver_data).fmod_result()?;
+
         log::info!("successfully initialized fmod system, samplerate: {SYSTEM_SAMPLERATE}");
         Ok(())
+    }
+
+    fn fmod_apply_buffer_size(&self) -> Result<()> {
+        unsafe {
+            FMOD_System_SetStreamBufferSize(self.system, self.conf.buffer_size, FMOD_TIMEUNIT_PCM)
+                .fmod_result()?;
+
+            let mut numbuffers = 0i32;
+            let mut bufferlength = 0u32;
+            FMOD_System_GetDSPBufferSize(self.system, &mut bufferlength, &mut numbuffers)
+                .fmod_result()?;
+            log::info!(
+                "FMOD_System_GetDSPBufferSize: bufferlength: {bufferlength}, numbuffers: {numbuffers}"
+            );
+            FMOD_System_SetDSPBufferSize(self.system, self.conf.buffer_size, numbuffers)
+                .fmod_result()?;
+        }
+        Ok(())
+    }
+
+    pub fn release_fmod(&mut self) {
+        let _ = unsafe {
+            FMOD_System_Release(self.system)
+                .fmod_result()
+                .map_err(|e| log::error!("failed to release fmod system: {e}"))
+        };
+        self.system = std::ptr::null_mut();
     }
 
     pub fn init(&mut self) {
@@ -1000,7 +1063,9 @@ impl Bot {
         }
 
         // init audio playback
-        self.maybe_init_kittyaudio();
+        if !self.conf.use_fmod {
+            self.maybe_init_kittyaudio();
+        }
         unsafe {
             let _ = self
                 .init_fmod()
@@ -1254,7 +1319,7 @@ impl Bot {
         }
 
         // auto-save config
-        if self.last_conf_save.elapsed() > Duration::from_secs(3) {
+        if self.last_conf_save.elapsed() > Duration::from_secs(2) {
             if self.conf != self.prev_conf && !self.did_reset_config {
                 self.conf.save();
                 self.last_conf_save = Instant::now();
@@ -1286,6 +1351,11 @@ impl Bot {
         }
         if toggle_noise {
             self.open_noise_toggle_toast(&mut toasts);
+        }
+
+        // show all queued toasts
+        for toast in self.toast_queue.lock().unwrap().drain(..) {
+            toasts.add(toast);
         }
 
         egui::Window::new("ZCB Live").show(ctx, |ui| {
@@ -1402,6 +1472,11 @@ impl Bot {
                 ui,
                 "Synchronize actions with the timestep of the game",
                 |ui| ui.checkbox(&mut self.conf.use_playlayer_time, "Use PlayLayer time"),
+            );
+            help_text(
+                ui,
+                "Use MinHook instead of Retour for hooking",
+                |ui| ui.checkbox(&mut self.conf.use_minhook, "Use MinHook"),
             );
 
             ui.horizontal(|ui| {
@@ -1650,6 +1725,12 @@ impl Bot {
             "Use the internal audio engine for integration with internal recorders",
             |ui| {
                 if ui.checkbox(&mut self.conf.use_fmod, "Use FMOD").changed() {
+                    if self.conf.use_fmod {
+                        log::info!("destroying kittyaudio mixer");
+                        self.mixer = Mixer::new();
+                    } else {
+                        self.maybe_init_kittyaudio();
+                    }
                     self.play_noise();
                 }
             },
@@ -1812,6 +1893,9 @@ impl Bot {
         });
 
         ui.collapsing("Advanced", |ui| {
+            // let last_bufsize = self.mixer.renderer.guard().last_buffer_size;
+            // ui.label(format!("Real buffer size: {last_bufsize}"));
+
             let prev_bufsize = self.conf.buffer_size;
             help_text(
                 ui,
@@ -1831,9 +1915,13 @@ impl Bot {
                         .on_hover_text("Apply buffer size changes")
                         .clicked()
                     {
-                        self.maybe_init_kittyaudio();
+                        if !self.conf.use_fmod {
+                            self.maybe_init_kittyaudio();
+                            self.play_noise();
+                        } else {
+                            self.show_fmod_buffersize_warn = true;
+                        }
                         self.buffer_size_changed = false;
-                        self.play_noise();
                     }
 
                     if self.conf.buffer_size > 300_000 {
@@ -1843,6 +1931,18 @@ impl Bot {
                         );
                     }
                 });
+            }
+            if self.show_fmod_buffersize_warn && self.conf.buffer_size != self.startup_buffer_size {
+                ui.label(
+                    RichText::new("WARN: Restart the game to apply FMOD buffer size changes")
+                        .color(Color32::YELLOW),
+                );
+            }
+            if self.conf.use_fmod && self.startup_buffer_size < 10 {
+                ui.label(
+                    "If you don't hear any audio, it might be because your buffer size is set too low. \
+                    The recommended value for FMOD is 10."
+                );
             }
         });
 
@@ -2059,12 +2159,7 @@ impl Bot {
 
 impl Drop for Bot {
     fn drop(&mut self) {
-        if !self.system.is_null() {
-            let _ = unsafe {
-                FMOD_System_Release(self.system)
-                    .fmod_result()
-                    .map_err(|e| log::error!("failed to release fmod system: {e}"))
-            };
-        }
+        self.unload_clickpack();
+        self.release_fmod()
     }
 }
