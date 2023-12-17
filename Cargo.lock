@@ -791,7 +791,6 @@ dependencies = [
  "log",
  "minhook",
  "once_cell",
- "parking_lot",
  "rand",
  "retour",
  "rfd",

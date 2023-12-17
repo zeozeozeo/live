@@ -667,7 +667,7 @@ impl Default for Config {
             noise_speedhack: 1.0,
             // sync_speed_with_game: true,
             hook_wait: false,
-            use_minhook: false,
+            use_minhook: true,
         }
     }
 }
