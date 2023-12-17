@@ -4,9 +4,6 @@ mod bot;
 mod hooks;
 mod utils;
 
-// #[cfg(feature = "special")]
-mod replay;
-
 use bot::BOT;
 use retour::static_detour;
 use std::ffi::c_void;

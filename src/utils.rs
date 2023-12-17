@@ -1,7 +1,5 @@
 use anyhow::Result;
 use geometrydash::fmod::{self, FMOD_RESULT};
-use std::ffi::CString;
-use windows::Win32::System::LibraryLoader::GetModuleHandleA;
 
 pub fn capitalize_first_letter(s: &str) -> String {
     let mut c = s.chars();
@@ -105,30 +103,5 @@ impl IntoFmodResult for FMOD_RESULT {
             fmod::FMOD_ERR_TOOMANYSAMPLES =>            "The length provided exceeds the allowable limit.",
             _ => "Unknown error.",
         });
-    }
-}
-
-pub fn get_echo_base() -> Result<usize> {
-    Ok(
-        unsafe {
-            GetModuleHandleA(windows::core::s!("Echo_v1.0.dll")).map(|hmod| hmod.0 as usize)?
-        },
-    )
-}
-
-pub fn get_echo_macro_name() -> Result<String> {
-    unsafe {
-        let echo_base = get_echo_base()?;
-        // 940 - macro_name offset
-        let macro_name = echo_base + 0x150448 + 940; // char macro_name[1000];
-        Ok(CString::from_raw(macro_name as *mut i8).into_string()?)
-    }
-}
-
-pub fn get_echo_fps() -> f32 {
-    unsafe {
-        let echo_base = get_echo_base().unwrap();
-        let fps = echo_base + 0x150448 + 940 - 4;
-        *(fps as *const f32)
     }
 }
