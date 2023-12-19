@@ -400,6 +400,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-opengl-internal"
+version = "0.1.0"
+dependencies = [
+ "clipboard",
+ "egui",
+ "gl",
+ "lock_api",
+ "once_cell",
+ "parking_lot",
+ "spin",
+ "thiserror",
+ "windows 0.52.0",
+]
+
+[[package]]
 name = "egui-toast"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -575,6 +590,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "gl"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a94edab108827d67608095e269cf862e60d920f144a5026d3dbcfd8b877fb404"
+dependencies = [
+ "gl_generator",
+]
+
+[[package]]
+name = "gl_generator"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a95dfc23a2b4a9a2f5ab41d194f8bfda3cabec42af4e39f08c339eb2a0c124d"
+dependencies = [
+ "khronos_api",
+ "log",
+ "xml-rs",
+]
+
+[[package]]
 name = "glib-sys"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -721,6 +756,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "khronos_api"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
+
+[[package]]
 name = "kittyaudio"
 version = "0.1.6"
 source = "git+https://github.com/zeozeozeo/kittyaudio.git#e3bac2533000be7e947f522cee571ceceb93e383"
@@ -784,6 +825,7 @@ dependencies = [
  "egui",
  "egui-keybind",
  "egui-modal",
+ "egui-opengl-internal",
  "egui-toast",
  "egui_gl_hook",
  "geometrydash",
@@ -1402,6 +1444,15 @@ name = "smallvec"
 version = "1.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4dccd0940a2dcdf68d092b8cbab7dc0ad8fa938bf95787e1b916b0e3d0e8e970"
+
+[[package]]
+name = "spin"
+version = "0.9.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+dependencies = [
+ "lock_api",
+]
 
 [[package]]
 name = "symphonia"
@@ -2163,6 +2214,12 @@ dependencies = [
  "libc",
  "log",
 ]
+
+[[package]]
+name = "xml-rs"
+version = "0.8.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fcb9cbac069e033553e8bb871be2fbdffcab578eb25bd0f7c508cedc6dcd75a"
 
 [[package]]
 name = "zerocopy"

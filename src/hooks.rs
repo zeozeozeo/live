@@ -226,17 +226,17 @@ macro_rules! hook {
             ::log::info!("creating minhook hook: {} -> {:#x}", stringify!($static), $addr);
             concat_idents!($static, _MinHook) = ::std::mem::transmute(
                 ::minhook::MinHook::create_hook(addr as _, $detour as _)
-                    .expect(stringify!(failed to hook $static))
+                    .expect(stringify!(failed to hook $static with minhook))
             );
         } else {
             ::log::info!("initializing retour hook: {} -> {:#x}", stringify!($static), $addr);
             $static
                 .initialize(::std::mem::transmute(addr), concat_idents!($detour, _retour))
-                .expect(stringify!(failed to hook $static));
+                .expect(stringify!(failed to hook $static with retour));
             ::log::info!("enabling retour hook: {} -> {:#x}", stringify!($static), $addr);
             $static
                 .enable()
-                .expect(stringify!(failed to enable $static hook));
+                .expect(stringify!(failed to enable $static retour hook));
         }
     };
 }
@@ -250,8 +250,6 @@ pub unsafe fn init_hooks() {
     let alternate = unsafe { BOT.conf.use_alternate_hook };
 
     if !alternate {
-        hook!(PushButton, push_button, 0x1F4E40);
-        hook!(ReleaseButton, release_button, 0x1F4F70);
         hook!(PushButton, push_button, 0x1F4E40);
         hook!(ReleaseButton, release_button, 0x1F4F70);
     } else {
