@@ -224,10 +224,9 @@ macro_rules! hook {
         let addr = ::geometrydash::get_base() + $addr;
         if unsafe { BOT.used_minhook } {
             ::log::info!("creating minhook hook: {} -> {:#x}", stringify!($static), $addr);
-            concat_idents!($static, _MinHook) = ::std::mem::transmute(
+            concat_idents!($static, _MinHook) =
                 ::minhook::MinHook::create_hook(addr as _, $detour as _)
-                    .expect(stringify!(failed to hook $static with minhook))
-            );
+                    .expect(stringify!(failed to hook $static with minhook));
         } else {
             ::log::info!("initializing retour hook: {} -> {:#x}", stringify!($static), $addr);
             $static
@@ -274,7 +273,7 @@ macro_rules! disable_hooks {
         $(
             if unsafe { BOT.used_minhook } {
                 log::info!("disabling {} minhook hook", stringify!($static));
-                let _ = ::minhook::MinHook::disable_hook(::std::mem::transmute(concat_idents!($static, _MinHook)))
+                let _ = ::minhook::MinHook::disable_hook(concat_idents!($static, _MinHook))
                     .map_err(|e| log::error!("failed to disable {} minhook hook: {e:?}", stringify!($static)));
             } else {
                 log::info!("disabling {} retour hook", stringify!($static));

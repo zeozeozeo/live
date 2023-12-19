@@ -55,6 +55,8 @@ unsafe extern "system" fn h_wndproc(
 }
 
 /// DLL entrypoint
+///
+/// # Safety
 #[no_mangle]
 pub unsafe extern "system" fn DllMain(dll: u32, reason: u32, _reserved: *mut c_void) -> BOOL {
     match reason {
@@ -122,7 +124,7 @@ unsafe extern "system" fn zcblive_main(_dll: *mut c_void) -> u32 {
                 }),
             )
             .expect("failed to call paint()");
-            return h_wglSwapBuffers.call(hdc);
+            h_wglSwapBuffers.call(hdc)
         })
         .unwrap()
         .enable()
@@ -133,7 +135,11 @@ unsafe extern "system" fn zcblive_main(_dll: *mut c_void) -> u32 {
     let hwnd = WindowFromDC(hdc);
 
     // set wndproc
-    O_WNDPROC = Some(SetWindowLongPtrA(hwnd, GWLP_WNDPROC, h_wndproc as _));
+    O_WNDPROC = Some(SetWindowLongPtrA(
+        hwnd,
+        GWLP_WNDPROC,
+        h_wndproc as usize as i32,
+    ));
     0
 }
 
