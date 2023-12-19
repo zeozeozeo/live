@@ -635,6 +635,8 @@ pub struct Config {
     pub hook_wait: bool,
     #[serde(default = "bool::default")]
     pub use_minhook: bool,
+    #[serde(default = "bool::default")]
+    pub use_old_egui_hook: bool,
 }
 
 impl Config {
@@ -669,6 +671,7 @@ impl Default for Config {
             // sync_speed_with_game: true,
             hook_wait: false,
             use_minhook: true,
+            use_old_egui_hook: false,
         }
     }
 }
@@ -745,6 +748,7 @@ pub struct Bot {
     pub show_fmod_buffersize_warn: bool,
     pub startup_buffer_size: u32,
     pub used_minhook: bool,
+    pub used_old_egui_hook: bool,
 }
 
 impl Default for Bot {
@@ -753,6 +757,7 @@ impl Default for Bot {
         let use_alternate_hook = conf.use_alternate_hook;
         let startup_buffer_size = conf.buffer_size;
         let used_minhook = conf.use_minhook;
+        let used_old_egui_hook = conf.use_old_egui_hook;
         Self {
             conf: conf.clone(),
             players: (Sounds::default(), Sounds::default()),
@@ -787,6 +792,7 @@ impl Default for Bot {
             show_fmod_buffersize_warn: false,
             startup_buffer_size,
             used_minhook,
+            used_old_egui_hook,
         }
     }
 }

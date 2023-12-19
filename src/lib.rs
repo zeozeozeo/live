@@ -5,8 +5,9 @@ mod hooks;
 mod utils;
 
 use bot::BOT;
+use egui_opengl_internal::OpenGLApp;
 use retour::static_detour;
-use std::ffi::c_void;
+use std::{ffi::c_void, sync::Once};
 use windows::Win32::{
     Foundation::{BOOL, HWND, LPARAM, LRESULT, TRUE, WPARAM},
     Graphics::Gdi::{WindowFromDC, HDC},
@@ -28,6 +29,22 @@ type FnWglSwapBuffers = unsafe extern "system" fn(HDC) -> i32;
 
 /// returned from SetWindowLongPtrA
 static mut O_WNDPROC: Option<i32> = None;
+static mut EGUI_APP: OpenGLApp<i32> = OpenGLApp::new();
+
+unsafe fn h_wndproc_old(hwnd: HWND, umsg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    let egui_wants_input = EGUI_APP.wnd_proc(umsg, wparam, lparam);
+    if egui_wants_input {
+        return LRESULT(1);
+    }
+
+    CallWindowProcA(
+        std::mem::transmute(O_WNDPROC.unwrap()),
+        hwnd,
+        umsg,
+        wparam,
+        lparam,
+    )
+}
 
 /// WNDPROC hook
 #[no_mangle]
@@ -37,6 +54,10 @@ unsafe extern "system" fn h_wndproc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if BOT.used_old_egui_hook {
+        return h_wndproc_old(hwnd, umsg, wparam, lparam);
+    }
+
     if egui_gl_hook::is_init() {
         let should_skip_wnd_proc = egui_gl_hook::on_event(umsg, wparam.0, lparam.0).unwrap();
 
@@ -79,6 +100,57 @@ pub unsafe extern "system" fn DllMain(dll: u32, reason: u32, _reserved: *mut c_v
     TRUE
 }
 
+fn hk_wgl_swap_buffers_old(hdc: HDC) -> i32 {
+    unsafe {
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            let window = WindowFromDC(hdc);
+            EGUI_APP.init_default(hdc, window, |ctx, _| BOT.draw_ui(ctx));
+
+            O_WNDPROC = Some(std::mem::transmute(SetWindowLongPtrA(
+                window,
+                GWLP_WNDPROC,
+                h_wndproc as usize as i32,
+            )));
+        });
+
+        EGUI_APP.render(hdc);
+        h_wglSwapBuffers.call(hdc)
+    }
+}
+
+fn hk_wgl_swap_buffers(hdc: HDC) -> i32 {
+    unsafe {
+        if BOT.used_old_egui_hook {
+            return hk_wgl_swap_buffers_old(hdc);
+        }
+        if hdc == HDC(0) {
+            return h_wglSwapBuffers.call(hdc);
+        }
+
+        // initialize egui_gl_hook
+        if !egui_gl_hook::is_init() {
+            let hwnd = WindowFromDC(hdc);
+            O_WNDPROC = Some(SetWindowLongPtrA(
+                hwnd,
+                GWLP_WNDPROC,
+                h_wndproc as usize as i32,
+            ));
+            egui_gl_hook::init(hdc).unwrap();
+        }
+
+        // paint this frame
+        egui_gl_hook::paint(
+            hdc,
+            Box::new(|ctx| {
+                BOT.draw_ui(ctx);
+            }),
+        )
+        .expect("failed to call paint()");
+        h_wglSwapBuffers.call(hdc)
+    }
+}
+
 /// Main function
 #[no_mangle]
 unsafe extern "system" fn zcblive_main(_dll: *mut c_void) -> u32 {
@@ -98,48 +170,15 @@ unsafe extern "system" fn zcblive_main(_dll: *mut c_void) -> u32 {
     let swap_buffers: FnWglSwapBuffers =
         std::mem::transmute(GetProcAddress(opengl, windows::core::s!("wglSwapBuffers")));
 
-    let (sx, rx) = std::sync::mpsc::channel();
-
     // init bot
     BOT.init();
 
     // initialize swapbuffers hook
     h_wglSwapBuffers
-        .initialize(swap_buffers, move |hdc| {
-            if hdc == HDC(0) {
-                return h_wglSwapBuffers.call(hdc);
-            }
-
-            // initialize egui_gl_hook
-            if !egui_gl_hook::is_init() {
-                sx.send(hdc).unwrap();
-                egui_gl_hook::init(hdc).unwrap();
-            }
-
-            // paint this frame
-            egui_gl_hook::paint(
-                hdc,
-                Box::new(|ctx| {
-                    BOT.draw_ui(ctx);
-                }),
-            )
-            .expect("failed to call paint()");
-            h_wglSwapBuffers.call(hdc)
-        })
+        .initialize(swap_buffers, hk_wgl_swap_buffers)
         .unwrap()
         .enable()
         .unwrap();
-
-    // wait until the closure sends hdc to us
-    let hdc = rx.recv().unwrap();
-    let hwnd = WindowFromDC(hdc);
-
-    // set wndproc
-    O_WNDPROC = Some(SetWindowLongPtrA(
-        hwnd,
-        GWLP_WNDPROC,
-        h_wndproc as usize as i32,
-    ));
     0
 }
 
