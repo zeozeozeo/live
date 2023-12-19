@@ -9,7 +9,7 @@ use windows::{
             Input::KeyboardAndMouse::{
                 GetAsyncKeyState, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END,
                 VK_ESCAPE, VK_HOME, VK_INSERT, VK_LEFT, VK_LSHIFT, VK_NEXT, VK_PRIOR, VK_RETURN,
-                VK_RIGHT, VK_SPACE, VK_TAB, VK_UP,
+                VK_RIGHT, VK_SPACE, VK_SUBTRACT, VK_TAB, VK_UP,
             },
             WindowsAndMessaging::{
                 GetClientRect, KF_REPEAT, WHEEL_DELTA, WM_CHAR, WM_KEYDOWN, WM_KEYUP,
@@ -344,6 +344,7 @@ fn get_key(wparam: usize) -> Option<Key> {
     match wparam {
         0x30..=0x39 => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x1F)) },
         0x41..=0x5A => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x26)) },
+        0x60..=0x69 => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x4F)) },
         0x70..=0x83 => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x3B)) },
         _ => match VIRTUAL_KEY(wparam as u16) {
             VK_DOWN => Some(Key::ArrowDown),
@@ -361,6 +362,7 @@ fn get_key(wparam: usize) -> Option<Key> {
             VK_END => Some(Key::End),
             VK_PRIOR => Some(Key::PageUp),
             VK_NEXT => Some(Key::PageDown),
+            VK_SUBTRACT => Some(Key::Minus),
             _ => None,
         },
     }
