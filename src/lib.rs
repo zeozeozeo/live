@@ -9,10 +9,10 @@ use egui_opengl_internal::OpenGLApp;
 use retour::static_detour;
 use std::{ffi::c_void, sync::Once};
 use windows::Win32::{
-    Foundation::{BOOL, HWND, LPARAM, LRESULT, TRUE, WPARAM},
+    Foundation::{BOOL, HMODULE, HWND, LPARAM, LRESULT, TRUE, WPARAM},
     Graphics::Gdi::{WindowFromDC, HDC},
     System::{
-        LibraryLoader::{GetModuleHandleA, GetProcAddress},
+        LibraryLoader::FreeLibraryAndExitThread,
         SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH},
         Threading::{CreateThread, THREAD_CREATION_FLAGS},
     },
@@ -94,6 +94,7 @@ pub unsafe extern "system" fn DllMain(dll: u32, reason: u32, _reserved: *mut c_v
         }
         DLL_PROCESS_DETACH => {
             hooks::disable_hooks();
+            FreeLibraryAndExitThread(std::mem::transmute::<_, HMODULE>(dll), 0);
         }
         _ => {}
     }
@@ -153,7 +154,7 @@ fn hk_wgl_swap_buffers(hdc: HDC) -> i32 {
 
 /// Main function
 #[no_mangle]
-unsafe extern "system" fn zcblive_main(_dll: *mut c_void) -> u32 {
+unsafe extern "system" fn zcblive_main(_hmod: *mut c_void) -> u32 {
     // wait for enter key on panics
     let panic_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info: &std::panic::PanicInfo<'_>| {
@@ -166,12 +167,11 @@ unsafe extern "system" fn zcblive_main(_dll: *mut c_void) -> u32 {
     BOT.maybe_alloc_console();
 
     // get swapbuffers function
-    let opengl = GetModuleHandleA(windows::core::s!("OPENGL32.dll")).unwrap();
-    let swap_buffers: FnWglSwapBuffers =
-        std::mem::transmute(GetProcAddress(opengl, windows::core::s!("wglSwapBuffers")));
+    let swap_buffers: FnWglSwapBuffers = std::mem::transmute(
+        egui_opengl_internal::utils::get_proc_address("wglSwapBuffers"),
+    );
 
-    // init bot
-    BOT.init();
+    log::info!("wglSwapBuffers: {:#X}", swap_buffers as usize);
 
     // initialize swapbuffers hook
     h_wglSwapBuffers
@@ -179,6 +179,9 @@ unsafe extern "system" fn zcblive_main(_dll: *mut c_void) -> u32 {
         .unwrap()
         .enable()
         .unwrap();
+
+    // init bot
+    BOT.init();
     0
 }
 

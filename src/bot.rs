@@ -12,9 +12,9 @@ use egui_modal::{Icon, Modal};
 use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 use geometrydash::{
     fmod::{
-        FMOD_Channel_SetLoopCount, FMOD_Channel_SetLoopPoints, FMOD_Channel_SetPitch,
-        FMOD_Channel_SetVolume, FMOD_Channel_Stop, FMOD_Sound_GetLength, FMOD_Sound_Release,
-        FMOD_Sound_SetLoopCount, FMOD_Sound_SetLoopPoints, FMOD_System_Create,
+        FMOD_Channel_SetLoopCount, FMOD_Channel_SetPitch,
+        FMOD_Channel_SetVolume, FMOD_Channel_Stop, FMOD_Sound_Release,
+        FMOD_Sound_SetLoopCount, FMOD_System_Create,
         FMOD_System_CreateSound, FMOD_System_GetDSPBufferSize, FMOD_System_Init,
         FMOD_System_PlaySound, FMOD_System_Release, FMOD_System_SetDSPBufferSize,
         FMOD_System_SetSoftwareFormat, FMOD_System_SetStreamBufferSize, FMOD_System_Update,
@@ -1607,18 +1607,18 @@ impl Bot {
         let start_fmod_noise = |fmodn: &mut *mut FMOD_CHANNEL| unsafe {
             if let Some(noise) = self.noise.clone() {
                 // get sound length
-                let mut length = 0u32;
-                FMOD_Sound_GetLength(noise.fmod_sound, &mut length, FMOD_TIMEUNIT_PCM);
+                // let mut length = 0u32;
+                // FMOD_Sound_GetLength(noise.fmod_sound, &mut length, FMOD_TIMEUNIT_PCM);
 
                 // set loop points for sound
                 FMOD_Sound_SetLoopCount(noise.fmod_sound, i32::MAX);
-                FMOD_Sound_SetLoopPoints(
-                    noise.fmod_sound,
-                    0,
-                    FMOD_TIMEUNIT_PCM,
-                    1024,
-                    FMOD_TIMEUNIT_PCM,
-                );
+                // FMOD_Sound_SetLoopPoints(
+                //     noise.fmod_sound,
+                //     0,
+                //     FMOD_TIMEUNIT_PCM,
+                //     length,
+                //     FMOD_TIMEUNIT_PCM,
+                // );
 
                 // play the sound
                 FMOD_System_PlaySound(
@@ -1631,7 +1631,7 @@ impl Bot {
 
                 // update channel
                 FMOD_Channel_SetVolume(*fmodn, self.conf.noise_volume);
-                FMOD_Channel_SetLoopPoints(*fmodn, 0, FMOD_TIMEUNIT_PCM, 1024, FMOD_TIMEUNIT_PCM);
+                // FMOD_Channel_SetLoopPoints(*fmodn, 0, FMOD_TIMEUNIT_PCM, 1024, FMOD_TIMEUNIT_PCM);
                 FMOD_Channel_SetLoopCount(*fmodn, i32::MAX);
                 FMOD_Channel_SetPitch(*fmodn, self.conf.noise_speedhack as f32);
                 FMOD_System_Update(self.system);
