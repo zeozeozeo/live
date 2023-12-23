@@ -1,6 +1,6 @@
 use crate::{
-    hooks,
-    utils::{self, IntoFmodResult},
+    hooks::{self, get_base},
+    utils,
 };
 use anyhow::Result;
 use egui::{
@@ -10,26 +10,13 @@ use egui::{
 use egui_keybind::{Bind, Keybind, Shortcut};
 use egui_modal::{Icon, Modal};
 use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
-use geometrydash::{
-    fmod::{
-        FMOD_Channel_SetLoopCount, FMOD_Channel_SetPitch,
-        FMOD_Channel_SetVolume, FMOD_Channel_Stop, FMOD_Sound_Release,
-        FMOD_Sound_SetLoopCount, FMOD_System_Create,
-        FMOD_System_CreateSound, FMOD_System_GetDSPBufferSize, FMOD_System_Init,
-        FMOD_System_PlaySound, FMOD_System_Release, FMOD_System_SetDSPBufferSize,
-        FMOD_System_SetSoftwareFormat, FMOD_System_SetStreamBufferSize, FMOD_System_Update,
-        FMOD_CHANNEL, FMOD_CREATESOUNDEXINFO, FMOD_INIT_NORMAL, FMOD_LOOP_OFF, FMOD_OPENMEMORY,
-        FMOD_OPENRAW, FMOD_SOUND, FMOD_SOUND_FORMAT_PCMFLOAT, FMOD_SPEAKERMODE_STEREO, FMOD_SYSTEM,
-        FMOD_TIMEUNIT_PCM, FMOD_VERSION,
-    },
-    AddressUtils, FMODAudioEngine, PlayLayer, PlayerObject,
-};
 use kittyaudio::{Device, Mixer, PlaybackRate, Sound, SoundHandle, StreamSettings};
 use once_cell::sync::Lazy;
 use rand::{prelude::SliceRandom, Rng};
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use std::{
+    ffi::c_void,
     ops::{Deref, DerefMut, RangeInclusive},
     path::{Path, PathBuf},
     process::Command,
@@ -250,47 +237,23 @@ impl ClickType {
 #[derive(Clone)]
 pub struct SoundWrapper {
     sound: Sound,
-    fmod_sound: *mut FMOD_SOUND,
+    // fmod_sound: *mut FMOD_SOUND,
 }
 
 impl SoundWrapper {
-    pub fn from_path(system: *mut FMOD_SYSTEM, path: &Path) -> Result<Self> {
+    pub fn from_path(path: &Path) -> Result<Self> {
         // load kittyaudio sound
         let sound = Sound::from_path(path)?;
-
-        // create fmod sound exinfo, we want to load the sound from memory
-        let mut exinfo: FMOD_CREATESOUNDEXINFO = unsafe { std::mem::zeroed() };
-        exinfo.cbsize = std::mem::size_of::<FMOD_CREATESOUNDEXINFO>() as i32;
-        exinfo.numchannels = 2;
-        exinfo.format = FMOD_SOUND_FORMAT_PCMFLOAT;
-        exinfo.defaultfrequency = sound.sample_rate() as i32;
-        exinfo.length = sound.frames.len() as u32 * std::mem::size_of::<f32>() as u32 * 2;
-
-        // create fmod sound
-        let mut fmod_sound: *mut FMOD_SOUND = std::ptr::null_mut();
-        unsafe {
-            // we ignore this error because it doesn't matter if you use the kittyaudio backend
-            let _ = FMOD_System_CreateSound(
-                system,
-                sound.frames.as_ptr() as *const i8,
-                FMOD_OPENMEMORY | FMOD_OPENRAW | FMOD_LOOP_OFF,
-                &mut exinfo,
-                &mut fmod_sound,
-            )
-            .fmod_result()
-            .map_err(|e| log::error!("failed to create fmod sound: {e}"));
-        };
-
-        Ok(Self { sound, fmod_sound })
+        Ok(Self { sound })
     }
 
     fn free(&mut self) {
-        let _ = unsafe {
-            FMOD_Sound_Release(self.fmod_sound)
-                .fmod_result()
-                .map_err(|e| log::error!("failed to release fmod sound: {e}"))
-        };
-        self.fmod_sound = std::ptr::null_mut();
+        // let _ = unsafe {
+        //     FMOD_Sound_Release(self.fmod_sound)
+        //         .fmod_result()
+        //         .map_err(|e| log::error!("failed to release fmod sound: {e}"))
+        // };
+        // self.fmod_sound = std::ptr::null_mut();
     }
 }
 
@@ -320,7 +283,7 @@ pub struct Sounds {
     pub microreleases: Vec<SoundWrapper>,
 }
 
-fn read_clicks_in_directory(dir: &Path, system: *mut FMOD_SYSTEM) -> Vec<SoundWrapper> {
+fn read_clicks_in_directory(dir: &Path) -> Vec<SoundWrapper> {
     let Ok(dir) = dir.read_dir() else {
         // log::warn!("can't find directory {dir:?}, skipping");
         return vec![];
@@ -329,7 +292,7 @@ fn read_clicks_in_directory(dir: &Path, system: *mut FMOD_SYSTEM) -> Vec<SoundWr
     for entry in dir {
         let path = entry.unwrap().path();
         if path.is_file() {
-            let sound = SoundWrapper::from_path(system, &path);
+            let sound = SoundWrapper::from_path(&path);
             if let Ok(sound) = sound {
                 sounds.push(sound);
             } else if let Err(e) = sound {
@@ -361,7 +324,7 @@ pub fn find_noise_file(dir: &Path) -> Option<PathBuf> {
 }
 
 impl Sounds {
-    pub fn from_path(path: &Path, system: *mut FMOD_SYSTEM) -> Self {
+    pub fn from_path(path: &Path) -> Self {
         let mut sounds = Self::default();
 
         for (dir, clicks) in [
@@ -376,12 +339,12 @@ impl Sounds {
         ] {
             let mut pathbuf = path.to_path_buf();
             pathbuf.push(dir);
-            clicks.extend(read_clicks_in_directory(&pathbuf, system));
+            clicks.extend(read_clicks_in_directory(&pathbuf));
         }
 
         if !sounds.has_sounds() {
             log::warn!("no sounds found, assuming there's no subdirectories");
-            sounds.clicks = read_clicks_in_directory(path, system);
+            sounds.clicks = read_clicks_in_directory(path);
         }
 
         sounds
@@ -642,6 +605,9 @@ pub struct Config {
 impl Config {
     pub fn fixup(mut self) -> Self {
         self.buffer_size = self.buffer_size.max(1);
+        if self.use_old_egui_hook {
+            self.hidden = false;
+        }
         self
     }
 }
@@ -719,7 +685,7 @@ pub struct Bot {
     pub players: (Sounds, Sounds),
     pub noise: Option<SoundWrapper>,
     pub mixer: Mixer,
-    pub playlayer: PlayLayer,
+    pub playlayer: *mut c_void, // PlayLayer
     pub prev_time: f64,
     pub is_loading_clickpack: bool,
     pub num_sounds: (usize, usize),
@@ -740,11 +706,11 @@ pub struct Bot {
     pub last_clickpack_reload: Instant,
     pub level_start: Instant,
     pub used_alternate_hook: bool,
-    pub system: *mut FMOD_SYSTEM,
-    pub channel: *mut FMOD_CHANNEL,
+    // pub system: *mut FMOD_SYSTEM,
+    // pub channel: *mut FMOD_CHANNEL,
     pub env: Env,
     pub toast_queue: Arc<Mutex<Vec<Toast>>>,
-    pub fmod_noise_sound: *mut FMOD_CHANNEL,
+    // pub fmod_noise_sound: *mut FMOD_CHANNEL,
     pub show_fmod_buffersize_warn: bool,
     pub startup_buffer_size: u32,
     pub used_minhook: bool,
@@ -763,7 +729,7 @@ impl Default for Bot {
             players: (Sounds::default(), Sounds::default()),
             noise: None,
             mixer: Mixer::new(),
-            playlayer: PlayLayer::from_address(0),
+            playlayer: std::ptr::null_mut(), // PlayLayer::from_address(0)
             prev_time: 0.0,
             is_loading_clickpack: false,
             num_sounds: (0, 0),
@@ -784,11 +750,11 @@ impl Default for Bot {
             last_clickpack_reload: Instant::now(),
             level_start: Instant::now(),
             used_alternate_hook: use_alternate_hook,
-            system: std::ptr::null_mut(),
-            channel: std::ptr::null_mut(),
+            // system: std::ptr::null_mut(),
+            // channel: std::ptr::null_mut(),
             env: Env::load(),
             toast_queue: Arc::new(Mutex::new(vec![])),
-            fmod_noise_sound: std::ptr::null_mut(),
+            // fmod_noise_sound: std::ptr::null_mut(),
             show_fmod_buffersize_warn: false,
             startup_buffer_size,
             used_minhook,
@@ -903,12 +869,12 @@ impl Bot {
             // load for both players
             self.players
                 .0
-                .extend_with(&Sounds::from_path(&player1_path, self.system));
+                .extend_with(&Sounds::from_path(&player1_path /*self.system*/));
             self.load_noise(&player1_path);
             if !player_dirnames.1.is_empty() {
                 self.players
                     .1
-                    .extend_with(&Sounds::from_path(&player2_path, self.system));
+                    .extend_with(&Sounds::from_path(&player2_path /*self.system*/));
                 self.load_noise(&player2_path);
             }
         }
@@ -943,7 +909,7 @@ impl Bot {
             return;
         };
         // try to load noise
-        self.noise = SoundWrapper::from_path(self.system, &path).ok();
+        self.noise = SoundWrapper::from_path(/*self.system*/ &path).ok();
     }
 
     pub fn has_sounds(&self) -> bool {
@@ -982,6 +948,7 @@ impl Bot {
     }
 
     pub unsafe fn init_fmod(&mut self) -> Result<()> {
+        /*
         const SYSTEM_SAMPLERATE: i32 = 48_000;
         log::info!("initializing fmod system");
         if !self.system.is_null() {
@@ -1015,10 +982,12 @@ impl Bot {
         FMOD_System_Init(self.system, 2048, FMOD_INIT_NORMAL, extra_driver_data).fmod_result()?;
 
         log::info!("successfully initialized fmod system, samplerate: {SYSTEM_SAMPLERATE}");
+        */
         Ok(())
     }
 
     fn fmod_apply_buffer_size(&self) -> Result<()> {
+        /*
         unsafe {
             FMOD_System_SetStreamBufferSize(self.system, self.conf.buffer_size, FMOD_TIMEUNIT_PCM)
                 .fmod_result()?;
@@ -1033,16 +1002,19 @@ impl Bot {
             FMOD_System_SetDSPBufferSize(self.system, self.conf.buffer_size, numbuffers)
                 .fmod_result()?;
         }
+        */
         Ok(())
     }
 
     pub fn release_fmod(&mut self) {
+        /*
         let _ = unsafe {
             FMOD_System_Release(self.system)
                 .fmod_result()
                 .map_err(|e| log::error!("failed to release fmod system: {e}"))
         };
         self.system = std::ptr::null_mut();
+        */
     }
 
     pub fn init(&mut self) {
@@ -1134,8 +1106,9 @@ impl Bot {
     /// Return whether a given [PlayerObject] is player 2. If playlayer is null,
     /// always return false.
     #[inline]
-    pub fn is_player2_obj(&self, player: PlayerObject) -> bool {
-        !self.playlayer.is_null() && self.playlayer.player2() == player
+    pub fn is_player2_obj(&self, player: *mut c_void /*PlayerObject*/) -> bool {
+        // !self.playlayer.is_null() && self.playlayer.player2() == player
+        false // TODO
     }
 
     fn get_pitch(&self) -> f64 {
@@ -1161,21 +1134,26 @@ impl Bot {
     }
 
     pub fn on_action(&mut self, push: bool, player2: bool) {
+        log::info!(
+            "on action: palyelayer: {:#x}, base: {:#x}",
+            self.playlayer as usize,
+            get_base()
+        );
         if self.num_sounds == (0, 0) || self.playlayer.is_null() || !self.conf.enabled {
             return;
         }
 
-        if (!self.playlayer.level_settings().is_2player() && player2)
-            || self.playlayer.is_paused()
-            || (!push && self.playlayer.time() == 0.0)
-        {
-            return;
-        }
+        // if (!self.playlayer.level_settings().is_2player() && player2)
+        //     || self.playlayer.is_paused()
+        //     || (!push && self.playlayer.time() == 0.0)
+        // {
+        //     return;
+        // }
 
-        #[cfg(not(feature = "special"))]
-        if self.playlayer.is_dead() {
-            return;
-        }
+        // #[cfg(not(feature = "special"))]
+        // if self.playlayer.is_dead() {
+        //     return;
+        // }
 
         let now = self.time();
         let dt = (now - self.prev_time).abs() as f32;
@@ -1239,9 +1217,11 @@ impl Bot {
                 sound.seek_to_end();
             }
         }
-        if !use_fmod {
+        // FIXME: 22 fix
+        if !use_fmod || true {
             self.mixer.play(click.sound);
         } else {
+            /*
             unsafe {
                 FMOD_System_PlaySound(
                     self.system,
@@ -1254,6 +1234,7 @@ impl Bot {
                 FMOD_Channel_SetVolume(self.channel, self.prev_volume);
                 FMOD_System_Update(self.system);
             }
+            */
         }
         self.prev_time = now;
         self.prev_click_type = click_type;
@@ -1263,6 +1244,7 @@ impl Bot {
 
     #[inline]
     fn time(&self) -> f64 {
+        /*
         if self.conf.use_playlayer_time {
             self.playlayer
                 .to_option()
@@ -1270,6 +1252,8 @@ impl Bot {
         } else {
             self.level_start.elapsed().as_secs_f64()
         }
+        */
+        self.level_start.elapsed().as_secs_f64() // TODO
     }
 
     fn open_clickbot_toggle_toast(&self, toasts: &mut Toasts) {
@@ -1590,10 +1574,10 @@ impl Bot {
             }
             *noise_sound = None;
         };
-        let stop_fmod_noise = |fmodn: &mut *mut FMOD_CHANNEL| {
-            unsafe { FMOD_Channel_Stop(*fmodn) };
-            *fmodn = std::ptr::null_mut();
-        };
+        // let stop_fmod_noise = |fmodn: &mut *mut FMOD_CHANNEL| {
+        //     unsafe { FMOD_Channel_Stop(*fmodn) };
+        //     *fmodn = std::ptr::null_mut();
+        // };
         let mut start_kittyaudio_noise = |noise_sound: &mut Option<SoundHandle>| {
             if let Some(mut noise) = self.noise.clone() {
                 noise.set_volume(self.conf.noise_volume);
@@ -1604,6 +1588,7 @@ impl Bot {
                 *noise_sound = Some(self.mixer.play(noise.sound));
             }
         };
+        /*
         let start_fmod_noise = |fmodn: &mut *mut FMOD_CHANNEL| unsafe {
             if let Some(noise) = self.noise.clone() {
                 // get sound length
@@ -1637,16 +1622,17 @@ impl Bot {
                 FMOD_System_Update(self.system);
             }
         };
+        */
 
         stop_kittyaudio_noise(&mut self.noise_sound);
-        stop_fmod_noise(&mut self.fmod_noise_sound);
+        // stop_fmod_noise(&mut self.fmod_noise_sound);
 
         if self.conf.use_fmod {
-            if self.conf.play_noise {
-                start_fmod_noise(&mut self.fmod_noise_sound);
-            } else {
-                stop_fmod_noise(&mut self.fmod_noise_sound);
-            }
+            // if self.conf.play_noise {
+            //     start_fmod_noise(&mut self.fmod_noise_sound);
+            // } else {
+            //     stop_fmod_noise(&mut self.fmod_noise_sound);
+            // }
         } else if self.conf.play_noise {
             start_kittyaudio_noise(&mut self.noise_sound);
         } else {

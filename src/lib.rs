@@ -32,6 +32,11 @@ static mut O_WNDPROC: Option<i32> = None;
 static mut EGUI_APP: OpenGLApp<i32> = OpenGLApp::new();
 
 unsafe fn h_wndproc_old(hwnd: HWND, umsg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        log::info!("CallWindowProcW hooked");
+    });
+
     let egui_wants_input = EGUI_APP.wnd_proc(umsg, wparam, lparam);
     if egui_wants_input {
         return LRESULT(1);
@@ -105,13 +110,14 @@ fn hk_wgl_swap_buffers_old(hdc: HDC) -> i32 {
     unsafe {
         static INIT: Once = Once::new();
         INIT.call_once(|| {
+            log::info!("wglSwapBuffers hooked");
             let window = WindowFromDC(hdc);
             EGUI_APP.init_default(hdc, window, |ctx, _| BOT.draw_ui(ctx));
 
             O_WNDPROC = Some(std::mem::transmute(SetWindowLongPtrA(
                 window,
                 GWLP_WNDPROC,
-                h_wndproc as usize as i32,
+                h_wndproc_old as usize as i32,
             )));
         });
 
@@ -175,7 +181,7 @@ unsafe extern "system" fn zcblive_main(_hmod: *mut c_void) -> u32 {
 
     // initialize swapbuffers hook
     h_wglSwapBuffers
-        .initialize(swap_buffers, hk_wgl_swap_buffers)
+        .initialize(swap_buffers, hk_wgl_swap_buffers_old)
         .unwrap()
         .enable()
         .unwrap();
@@ -195,6 +201,6 @@ unsafe extern "system" fn zcblive_action_callback(push: bool, player2: bool) {
 
 #[no_mangle]
 #[inline(never)]
-unsafe extern "system" fn zcblive_set_playlayer(playlayer: geometrydash::PlayLayer) {
+unsafe extern "system" fn zcblive_set_playlayer(playlayer: *mut c_void /*PlayLayer*/) {
     BOT.playlayer = playlayer;
 }
