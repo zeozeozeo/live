@@ -181,7 +181,14 @@ unsafe extern "system" fn zcblive_main(_hmod: *mut c_void) -> u32 {
 
     // initialize swapbuffers hook
     h_wglSwapBuffers
-        .initialize(swap_buffers, hk_wgl_swap_buffers_old)
+        .initialize(
+            swap_buffers,
+            if BOT.used_old_egui_hook {
+                hk_wgl_swap_buffers_old
+            } else {
+                hk_wgl_swap_buffers
+            },
+        )
         .unwrap()
         .enable()
         .unwrap();

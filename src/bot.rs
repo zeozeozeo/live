@@ -1134,11 +1134,11 @@ impl Bot {
     }
 
     pub fn on_action(&mut self, push: bool, player2: bool) {
-        log::info!(
-            "on action: palyelayer: {:#x}, base: {:#x}",
-            self.playlayer as usize,
-            get_base()
-        );
+        // log::info!(
+        //     "on action: palyelayer: {:#x}, base: {:#x}",
+        //     self.playlayer as usize,
+        //     get_base()
+        // );
         if self.num_sounds == (0, 0) || self.playlayer.is_null() || !self.conf.enabled {
             return;
         }
