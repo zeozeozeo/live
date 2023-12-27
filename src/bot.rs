@@ -763,14 +763,14 @@ impl Default for Bot {
     }
 }
 
-const PLAYER_DIRNAMES: [(&str, &str); 7] = [
-    ("player1", "player2"),
-    ("player 1", "player 2"),
-    ("sounds1", "sounds2"),
-    ("sounds 1", "sounds 2"),
-    ("p1", "p2"),
-    ("1", "2"),
-    ("", ""),
+const PLAYER_DIRNAMES: [(&str, &str, &str); 7] = [
+    ("player1", "player2", "player3"),
+    ("player 1", "player 2", "player 3"),
+    ("sounds1", "sounds2", "sounds2"),
+    ("sounds 1", "sounds 2", "sounds 3"),
+    ("p1", "p2", "p3"),
+    ("1", "2", "3"),
+    ("", "", ""),
 ];
 
 fn help_text<R>(ui: &mut egui::Ui, help: &str, add_contents: impl FnOnce(&mut egui::Ui) -> R) {

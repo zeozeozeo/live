@@ -34,7 +34,7 @@ static mut EGUI_APP: OpenGLApp<i32> = OpenGLApp::new();
 unsafe fn h_wndproc_old(hwnd: HWND, umsg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
-        log::info!("CallWindowProcW hooked");
+        log::info!("CallWindowProcW hooked (old)");
     });
 
     let egui_wants_input = EGUI_APP.wnd_proc(umsg, wparam, lparam);
@@ -59,9 +59,10 @@ unsafe extern "system" fn h_wndproc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    if BOT.used_old_egui_hook {
-        return h_wndproc_old(hwnd, umsg, wparam, lparam);
-    }
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        log::info!("CallWindowProcW hooked (new)");
+    });
 
     if egui_gl_hook::is_init() {
         let should_skip_wnd_proc = egui_gl_hook::on_event(umsg, wparam.0, lparam.0).unwrap();
@@ -110,7 +111,7 @@ fn hk_wgl_swap_buffers_old(hdc: HDC) -> i32 {
     unsafe {
         static INIT: Once = Once::new();
         INIT.call_once(|| {
-            log::info!("wglSwapBuffers hooked");
+            log::info!("wglSwapBuffers hooked (old)");
             let window = WindowFromDC(hdc);
             EGUI_APP.init_default(hdc, window, |ctx, _| BOT.draw_ui(ctx));
 
@@ -127,10 +128,12 @@ fn hk_wgl_swap_buffers_old(hdc: HDC) -> i32 {
 }
 
 fn hk_wgl_swap_buffers(hdc: HDC) -> i32 {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        log::info!("wglSwapBuffers hooked (new)");
+    });
+
     unsafe {
-        if BOT.used_old_egui_hook {
-            return hk_wgl_swap_buffers_old(hdc);
-        }
         if hdc == HDC(0) {
             return h_wglSwapBuffers.call(hdc);
         }
@@ -210,4 +213,10 @@ unsafe extern "system" fn zcblive_action_callback(push: bool, player2: bool) {
 #[inline(never)]
 unsafe extern "system" fn zcblive_set_playlayer(playlayer: *mut c_void /*PlayLayer*/) {
     BOT.playlayer = playlayer;
+}
+
+#[no_mangle]
+#[inline(never)]
+unsafe extern "system" fn _pe_stub() {
+    return;
 }

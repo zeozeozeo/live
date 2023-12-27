@@ -5,27 +5,16 @@ use std::ffi::c_void;
 
 pub const IS_22: bool = true;
 
-type FnPushButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
-type FnReleaseButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
-type FnPushButton2 = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32, bool) -> u32;
-type FnReleaseButton2 = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32, bool) -> u32;
-type FnInit = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, *mut c_void) -> bool;
+type FnInit = unsafe extern "fastcall" fn(*mut c_void, bool) -> bool;
 type FnQuit = unsafe extern "fastcall" fn(*mut c_void, *mut c_void);
 type FnReset = unsafe extern "fastcall" fn(*mut c_void, *mut c_void);
-type FnUpdate = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, f32);
-type FnOnEditor =
-    unsafe extern "fastcall" fn(*mut c_void, *mut c_void, *mut c_void) -> *const c_void;
+type FnHandleButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32, i32, bool) -> i32;
 
 static_detour! {
-    static PushButton: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
-    static ReleaseButton: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
-    static PushButton2: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32, bool) -> u32;
-    static ReleaseButton2: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32, bool) -> u32;
-    static Init: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, *mut c_void) -> bool;
+    static Init: unsafe extern "fastcall" fn(*mut c_void, bool) -> bool;
     static Quit: unsafe extern "fastcall" fn(*mut c_void, *mut c_void);
     static Reset: unsafe extern "fastcall" fn(*mut c_void, *mut c_void);
-    static Update: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, f32);
-    static OnEditor: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, *mut c_void) -> *const c_void;
+    static HandleButton: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32, i32, bool) -> i32;
 }
 
 macro_rules! make_minhook_statics {
@@ -38,15 +27,10 @@ macro_rules! make_minhook_statics {
 }
 
 make_minhook_statics!(
-    PushButton_MinHook,
-    ReleaseButton_MinHook,
-    PushButton2_MinHook,
-    ReleaseButton2_MinHook,
     Init_MinHook,
     Quit_MinHook,
     Reset_MinHook,
-    Update_MinHook,
-    OnEditor_MinHook
+    HandleButton_MinHook
 );
 
 /// Create a function wrapper without a specified calling convention
@@ -68,105 +52,43 @@ macro_rules! call_hook {
     };
 }
 
-unsafe extern "fastcall" fn push_button(
-    player: *mut c_void,
-    _edx: *mut c_void,
-    button: i32,
-) -> bool {
-    let res = call_hook!(
-        PushButton(player, std::ptr::null_mut(), button),
-        FnPushButton
-    );
-    unsafe { BOT.on_action(true, BOT.is_player2_obj(player)) };
-    res
+#[inline]
+fn get_game_manager() -> usize {
+    unsafe {
+        (std::mem::transmute::<usize, unsafe extern "stdcall" fn() -> usize>(get_base() + 1206560))(
+        )
+    }
 }
 
-make_retour_fn!(push_button, push_button_retour(player: *mut c_void, _edx: *mut c_void, button: i32) -> bool);
-
-unsafe extern "fastcall" fn release_button(
-    player: *mut c_void,
-    _edx: *mut c_void,
-    button: i32,
-) -> bool {
-    let res = call_hook!(
-        ReleaseButton(player, std::ptr::null_mut(), button),
-        FnReleaseButton
-    );
-    unsafe { BOT.on_action(false, BOT.is_player2_obj(player)) };
-    res
+fn get_game_variable(var: &str) -> bool {
+    let var = std::ffi::CString::new(var).unwrap(); // convert to c string
+    unsafe {
+        (std::mem::transmute::<usize, unsafe extern "fastcall" fn(usize, usize, *const u8) -> bool>(
+            get_base() + 5145320,
+        ))(get_game_manager(), 0, var.as_ptr() as *const u8)
+    }
 }
-
-make_retour_fn!(release_button, release_button_retour(player: *mut c_void, _edx: *mut c_void, button: i32) -> bool);
 
 #[inline]
 fn is_player1(playlayer: *mut c_void, button: bool) -> bool {
+    let game_manager = get_game_manager();
+
+    // v9(get_base() + 5145320, "0010")
     // let is2player = playlayer.level_settings().is_2player();
     // let flip = is2player && GameManager::shared().get_game_variable("0010");
     // !is2player || (button ^ flip)
     true // TODO
 }
 
-unsafe extern "fastcall" fn push_button2(
-    playlayer: *mut c_void,
-    _edx: *mut c_void,
-    param: i32,
-    button: bool,
-) -> u32 {
-    let res = call_hook!(
-        PushButton2(playlayer, std::ptr::null_mut(), param, button),
-        FnPushButton2
-    );
-    if unsafe { BOT.playlayer.is_null() } && !playlayer.is_null() {
-        log::debug!("push2 init");
-        unsafe { BOT.on_init() };
-    }
-    unsafe { BOT.playlayer = playlayer };
-
-    if IS_22 || unsafe { BOT.conf.use_alternate_hook } {
-        unsafe { BOT.on_action(true, !is_player1(playlayer, button)) };
-    }
-    res
-}
-
-make_retour_fn!(push_button2, push_button2_retour(playlayer: *mut c_void, _edx: *mut c_void, param: i32, button: bool) -> u32);
-
-unsafe extern "fastcall" fn release_button2(
-    playlayer: *mut c_void,
-    _edx: *mut c_void,
-    param: i32,
-    button: bool,
-) -> u32 {
-    let res = call_hook!(
-        ReleaseButton2(playlayer, std::ptr::null_mut(), param, button),
-        FnReleaseButton2
-    );
-    if unsafe { BOT.playlayer.is_null() } && !playlayer.is_null() {
-        log::debug!("release2 init");
-        unsafe { BOT.on_init() };
-    }
-    unsafe { BOT.playlayer = playlayer };
-
-    if IS_22 || unsafe { BOT.conf.use_alternate_hook } {
-        unsafe { BOT.on_action(false, !is_player1(playlayer, button)) };
-    }
-    res
-}
-
-make_retour_fn!(release_button2, release_button2_retour(playlayer: *mut c_void, _edx: *mut c_void, param: i32, button: bool) -> u32);
-
-unsafe extern "fastcall" fn init(
-    playlayer: *mut c_void,
-    _edx: *mut c_void,
-    level: *mut c_void,
-) -> bool {
-    let res = call_hook!(Init(playlayer, std::ptr::null_mut(), level), FnInit);
+unsafe extern "fastcall" fn init(playlayer: *mut c_void, something: bool) -> bool {
+    let res = call_hook!(Init(playlayer, something), FnInit);
     log::debug!("init");
     unsafe { BOT.playlayer = playlayer };
     unsafe { BOT.on_init() };
     res
 }
 
-make_retour_fn!(init, init_retour(playlayer: *mut c_void, _edx: *mut c_void, level: *mut c_void) -> bool);
+make_retour_fn!(init, init_retour(gamelevel: *mut c_void, dead: bool) -> bool);
 
 unsafe extern "fastcall" fn quit(playlayer: *mut c_void, _edx: *mut c_void) {
     call_hook!(Quit(playlayer, std::ptr::null_mut()), FnQuit);
@@ -192,28 +114,38 @@ unsafe extern "fastcall" fn reset(playlayer: *mut c_void, _edx: *mut c_void) {
 
 make_retour_fn!(reset, reset_retour(playlayer: *mut c_void, _edx: *mut c_void));
 
-unsafe extern "fastcall" fn update(playlayer: *mut c_void, _edx: *mut c_void, dt: f32) {
-    if unsafe { BOT.playlayer.is_null() } && !playlayer.is_null() {
-        log::debug!("update init");
-        unsafe { BOT.on_init() };
-    }
-    unsafe { BOT.playlayer = playlayer };
-
-    call_hook!(Update(playlayer, std::ptr::null_mut(), dt), FnUpdate);
-}
-
-make_retour_fn!(update, update_retour(playlayer: *mut c_void, _edx: *mut c_void, dt: f32));
-
-unsafe extern "fastcall" fn on_editor(
-    playlayer: *mut c_void,
+unsafe extern "fastcall" fn handle_button(
+    basegamelayer: *mut c_void,
     _edx: *mut c_void,
-    param: *mut c_void,
-) -> *const c_void {
-    unsafe { BOT.playlayer = std::ptr::null_mut() };
-    call_hook!(OnEditor(playlayer, std::ptr::null_mut(), param), FnOnEditor)
+    push: i32,
+    always_1: i32,
+    is_player1: bool,
+) -> i32 {
+    let res = call_hook!(
+        HandleButton(
+            basegamelayer,
+            std::ptr::null_mut(),
+            push,
+            always_1,
+            is_player1
+        ),
+        FnHandleButton
+    );
+    // log::info!("handle_button: {push}, {always_1}, {is_player1}");
+    unsafe { BOT.on_action(push != 0, !is_player1) };
+    res
 }
 
-make_retour_fn!(on_editor, on_editor_retour(playlayer: *mut c_void, _edx: *mut c_void, param: *mut c_void) -> *const c_void);
+make_retour_fn!(
+    handle_button,
+    handle_button_retour(
+        basegamelayer: *mut c_void,
+        _edx: *mut c_void,
+        a2: i32,
+        a3: i32,
+        button: bool
+    ) -> i32
+);
 
 macro_rules! patch {
     ($addr:expr, $data:expr) => {
@@ -221,27 +153,6 @@ macro_rules! patch {
         let _ = patch_mem($addr, $data)
             .map_err(|e| log::error!("failed to write {len} bytes at {:#x}: {e}", $addr));
     };
-}
-
-pub fn anticheat_bypass() {
-    log::info!("activating anticheat bypass");
-    patch!(get_base() + 0x202aaa, &[0xeb, 0x2e]);
-    patch!(get_base() + 0x15fc2e, &[0xeb]);
-    patch!(get_base() + 0x1fd557, &[0xeb, 0x0c]);
-    patch!(
-        get_base() + 0x1fd742,
-        &[
-            0xc7, 0x87, 0xe0, 0x02, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0xc7, 0x87, 0xe4, 0x02,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
-        ]
-    );
-    patch!(get_base() + 0x1fd756, &[0x90, 0x90, 0x90, 0x90, 0x90, 0x90]);
-    patch!(get_base() + 0x1fd79a, &[0x90, 0x90, 0x90, 0x90, 0x90, 0x90]);
-    patch!(get_base() + 0x1fd7af, &[0x90, 0x90, 0x90, 0x90, 0x90, 0x90]);
-    patch!(get_base() + 0x20d3b3, &[0x90, 0x90, 0x90, 0x90, 0x90]);
-    patch!(get_base() + 0x1ff7a2, &[0x90, 0x90]);
-    patch!(get_base() + 0x18b2b4, &[0xb0, 0x01]);
-    patch!(get_base() + 0x20c4e6, &[0xe9, 0xd7, 0x00, 0x00, 0x00, 0x90]);
 }
 
 /// GetModuleHandle(NULL)
@@ -307,32 +218,9 @@ pub unsafe fn init_hooks() {
         std::thread::sleep(std::time::Duration::from_secs(2));
     }
 
-    if !IS_22 {
-        anticheat_bypass();
-    }
-
-    let alternate = unsafe { BOT.conf.use_alternate_hook };
-
-    if !IS_22 {
-        if !alternate {
-            hook!(PushButton, push_button, 0x1F4E40);
-            hook!(ReleaseButton, release_button, 0x1F4F70);
-        } else {
-            hook!(PushButton2, push_button2, 0x111500);
-            hook!(ReleaseButton2, release_button2, 0x111660);
-        }
-    } else {
-        hook!(PushButton2, push_button2, 0x3B8F70);
-        hook!(ReleaseButton2, release_button2, 0x3B9290);
-    }
-
-    // hook!(Init, init, if IS_22 { 0x2d69a0 } else { 0x1fb780 });
-    if !IS_22 {
-        hook!(Quit, quit, 0x20D810);
-        hook!(Reset, reset, 0x20BF00);
-        hook!(Update, update, 0x2029C0);
-        hook!(OnEditor, on_editor, 0x1E60E0);
-    }
+    hook!(HandleButton, handle_button, 0x1b2880);
+    hook!(Init, init, 0x18cc80);
+    hook!(Reset, reset, 0x2e42b0);
 
     if unsafe { BOT.used_minhook } {
         log::info!("enabling all minhook hooks");
@@ -358,18 +246,6 @@ macro_rules! disable_hooks {
 
 pub unsafe fn disable_hooks() {
     log::info!("disabling hooks");
-
-    if unsafe { BOT.used_alternate_hook } && !IS_22 {
-        disable_hooks!(PushButton2, ReleaseButton2);
-    } else {
-        disable_hooks!(PushButton, ReleaseButton);
-    }
-
-    if !IS_22 {
-        disable_hooks!(Init, Quit, Reset, Update, OnEditor);
-    } else {
-        disable_hooks!(Init);
-    }
 
     if unsafe { BOT.used_minhook } {
         log::info!("uninitializing minhook");
