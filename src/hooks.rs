@@ -131,7 +131,7 @@ unsafe extern "fastcall" fn handle_button(
         ),
         FnHandleButton
     );
-    // log::info!("handle_button: {push}, {always_1}, {is_player1}");
+    //log::info!("handle_button: {push}, {always_1}, {is_player1}");
     unsafe { BOT.on_action(push != 0, !is_player1) };
     res
 }

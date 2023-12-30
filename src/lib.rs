@@ -198,7 +198,7 @@ unsafe extern "system" fn zcblive_main(_hmod: *mut c_void) -> u32 {
 
     // init bot
     BOT.init();
-    0
+    1
 }
 
 // functions for other mods to call if they need it for some reason
@@ -213,10 +213,4 @@ unsafe extern "system" fn zcblive_action_callback(push: bool, player2: bool) {
 #[inline(never)]
 unsafe extern "system" fn zcblive_set_playlayer(playlayer: *mut c_void /*PlayLayer*/) {
     BOT.playlayer = playlayer;
-}
-
-#[no_mangle]
-#[inline(never)]
-unsafe extern "system" fn _pe_stub() {
-    return;
 }

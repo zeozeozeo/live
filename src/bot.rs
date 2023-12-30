@@ -1385,13 +1385,14 @@ impl Bot {
 
     pub fn maybe_alloc_console(&self) {
         if self.conf.show_console {
-            unsafe { AllocConsole().unwrap() };
-            static INIT_ONCE: Once = Once::new();
-            INIT_ONCE.call_once(|| {
-                simple_logger::SimpleLogger::new()
-                    .init()
-                    .expect("failed to initialize simple_logger");
-            });
+            if unsafe { AllocConsole() }.is_ok() {
+                static INIT_ONCE: Once = Once::new();
+                INIT_ONCE.call_once(|| {
+                    simple_logger::SimpleLogger::new()
+                        .init()
+                        .expect("failed to initialize simple_logger");
+                });
+            }
         }
     }
 
