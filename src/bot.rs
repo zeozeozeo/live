@@ -715,6 +715,7 @@ pub struct Bot {
     pub startup_buffer_size: u32,
     pub used_minhook: bool,
     pub used_old_egui_hook: bool,
+    pub did_just_restart: bool,
 }
 
 impl Default for Bot {
@@ -759,6 +760,7 @@ impl Default for Bot {
             startup_buffer_size,
             used_minhook,
             used_old_egui_hook,
+            did_just_restart: false,
         }
     }
 }
@@ -1132,6 +1134,7 @@ impl Bot {
 
     pub fn on_reset(&mut self) {
         self.level_start = Instant::now();
+        self.did_just_restart = true;
     }
 
     pub fn on_action(&mut self, push: bool, player2: bool) {
@@ -1140,7 +1143,7 @@ impl Bot {
         //     self.playlayer as usize,
         //     get_base()
         // );
-        if self.num_sounds == (0, 0) || self.playlayer.is_null() || !self.conf.enabled {
+        if self.num_sounds == (0, 0) || self.playlayer.is_null() || !self.conf.enabled || self.did_just_restart {
             return;
         }
 

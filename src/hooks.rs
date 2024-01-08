@@ -10,6 +10,7 @@ type FnQuit = unsafe extern "fastcall" fn(*mut c_void, *mut c_void);
 type FnReset = unsafe extern "fastcall" fn(*mut c_void, *mut c_void);
 type FnPushButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
 type FnReleaseButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
+type FnUpdate = unsafe extern "fastcall" fn (*mut c_void, *mut c_void, f32);
 
 static_detour! {
     static Init: unsafe extern "fastcall" fn(*mut c_void, bool) -> bool;
@@ -17,6 +18,7 @@ static_detour! {
     static Reset: unsafe extern "fastcall" fn(*mut c_void, *mut c_void);
     static PushButton: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
     static ReleaseButton: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
+    static Update: unsafe extern "fastcall" fn (*mut c_void, *mut c_void, f32);
 }
 
 macro_rules! make_minhook_statics {
@@ -33,7 +35,8 @@ make_minhook_statics!(
     Quit_MinHook,
     Reset_MinHook,
     PushButton_MinHook,
-    ReleaseButton_MinHook
+    ReleaseButton_MinHook,
+    Update_MinHook
 );
 
 /// Create a function wrapper without a specified calling convention
@@ -116,7 +119,7 @@ make_retour_fn!(push_button, push_button_retour(player: *mut c_void, _edx: *mut 
 
 unsafe extern "fastcall" fn release_button(player: *mut c_void, _edx: *mut c_void, button: i32) -> bool {
     let res = call_hook!(ReleaseButton(player, std::ptr::null_mut(), button), FnReleaseButton);
-    unsafe { BOT.on_action(true, BOT.is_player2_obj(player)) };
+    unsafe { BOT.on_action(false, BOT.is_player2_obj(player)) };
     res
 }
 
@@ -129,6 +132,13 @@ macro_rules! patch {
             .map_err(|e| log::error!("failed to write {len} bytes at {:#x}: {e}", $addr));
     };
 }
+
+unsafe extern "fastcall" fn update(basegamelayer: *mut c_void, _edx: *mut c_void, dt: f32) {
+    call_hook!(Update(basegamelayer, std::ptr::null_mut(), dt), FnUpdate);
+    unsafe { BOT.did_just_restart = false };
+}
+
+make_retour_fn!(update, update_retour(basegamelayer: *mut c_void, _edx: *mut c_void, dt: f32));
 
 /// GetModuleHandle(NULL)
 #[inline]
@@ -195,6 +205,7 @@ pub unsafe fn init_hooks() {
     hook!(ReleaseButton, release_button, 0x2D02A0);
     // hook!(Init, init, 0x18cc80);
     hook!(Reset, reset, 0x2E8200);
+    hook!(Update, update, 0x1BA700);
 
     if unsafe { BOT.used_minhook } {
         log::info!("enabling all minhook hooks");
