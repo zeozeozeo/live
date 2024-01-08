@@ -8,13 +8,15 @@ pub const IS_22: bool = true;
 type FnInit = unsafe extern "fastcall" fn(*mut c_void, bool) -> bool;
 type FnQuit = unsafe extern "fastcall" fn(*mut c_void, *mut c_void);
 type FnReset = unsafe extern "fastcall" fn(*mut c_void, *mut c_void);
-type FnHandleButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32, i32, bool) -> i32;
+type FnPushButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
+type FnReleaseButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
 
 static_detour! {
     static Init: unsafe extern "fastcall" fn(*mut c_void, bool) -> bool;
     static Quit: unsafe extern "fastcall" fn(*mut c_void, *mut c_void);
     static Reset: unsafe extern "fastcall" fn(*mut c_void, *mut c_void);
-    static HandleButton: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32, i32, bool) -> i32;
+    static PushButton: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
+    static ReleaseButton: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
 }
 
 macro_rules! make_minhook_statics {
@@ -30,7 +32,8 @@ make_minhook_statics!(
     Init_MinHook,
     Quit_MinHook,
     Reset_MinHook,
-    HandleButton_MinHook
+    PushButton_MinHook,
+    ReleaseButton_MinHook
 );
 
 /// Create a function wrapper without a specified calling convention
@@ -69,17 +72,6 @@ fn get_game_variable(var: &str) -> bool {
     }
 }
 
-#[inline]
-fn is_player1(playlayer: *mut c_void, button: bool) -> bool {
-    let game_manager = get_game_manager();
-
-    // v9(get_base() + 5145320, "0010")
-    // let is2player = playlayer.level_settings().is_2player();
-    // let flip = is2player && GameManager::shared().get_game_variable("0010");
-    // !is2player || (button ^ flip)
-    true // TODO
-}
-
 unsafe extern "fastcall" fn init(playlayer: *mut c_void, something: bool) -> bool {
     let res = call_hook!(Init(playlayer, something), FnInit);
     log::debug!("init");
@@ -114,38 +106,21 @@ unsafe extern "fastcall" fn reset(playlayer: *mut c_void, _edx: *mut c_void) {
 
 make_retour_fn!(reset, reset_retour(playlayer: *mut c_void, _edx: *mut c_void));
 
-unsafe extern "fastcall" fn handle_button(
-    basegamelayer: *mut c_void,
-    _edx: *mut c_void,
-    push: i32,
-    always_1: i32,
-    is_player1: bool,
-) -> i32 {
-    let res = call_hook!(
-        HandleButton(
-            basegamelayer,
-            std::ptr::null_mut(),
-            push,
-            always_1,
-            is_player1
-        ),
-        FnHandleButton
-    );
-    //log::info!("handle_button: {push}, {always_1}, {is_player1}");
-    unsafe { BOT.on_action(push != 0, !is_player1) };
+unsafe extern "fastcall" fn push_button(player: *mut c_void, _edx: *mut c_void, button: i32) -> bool {
+    let res = call_hook!(PushButton(player, std::ptr::null_mut(), button), FnPushButton);
+    unsafe { BOT.on_action(true, BOT.is_player2_obj(player)) };
     res
 }
 
-make_retour_fn!(
-    handle_button,
-    handle_button_retour(
-        basegamelayer: *mut c_void,
-        _edx: *mut c_void,
-        a2: i32,
-        a3: i32,
-        button: bool
-    ) -> i32
-);
+make_retour_fn!(push_button, push_button_retour(player: *mut c_void, _edx: *mut c_void, button: i32) -> bool);
+
+unsafe extern "fastcall" fn release_button(player: *mut c_void, _edx: *mut c_void, button: i32) -> bool {
+    let res = call_hook!(ReleaseButton(player, std::ptr::null_mut(), button), FnReleaseButton);
+    unsafe { BOT.on_action(true, BOT.is_player2_obj(player)) };
+    res
+}
+
+make_retour_fn!(release_button, release_button_retour(player: *mut c_void, _edx: *mut c_void, button: i32) -> bool);
 
 macro_rules! patch {
     ($addr:expr, $data:expr) => {
@@ -214,13 +189,12 @@ macro_rules! hook {
 }
 
 pub unsafe fn init_hooks() {
-    if unsafe { BOT.conf.hook_wait } {
         std::thread::sleep(std::time::Duration::from_secs(2));
-    }
 
-    hook!(HandleButton, handle_button, 0x1b2880);
-    hook!(Init, init, 0x18cc80);
-    hook!(Reset, reset, 0x2e42b0);
+    hook!(PushButton, push_button, 0x2D0060);
+    hook!(ReleaseButton, release_button, 0x2D02A0);
+    // hook!(Init, init, 0x18cc80);
+    hook!(Reset, reset, 0x2E8200);
 
     if unsafe { BOT.used_minhook } {
         log::info!("enabling all minhook hooks");

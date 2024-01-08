@@ -722,7 +722,7 @@ impl Default for Bot {
         let conf = Config::load().unwrap_or_default().fixup();
         let use_alternate_hook = conf.use_alternate_hook;
         let startup_buffer_size = conf.buffer_size;
-        let used_minhook = conf.use_minhook;
+        let used_minhook = true; // conf.used_minhook TODO
         let used_old_egui_hook = conf.use_old_egui_hook;
         Self {
             conf: conf.clone(),
@@ -1074,6 +1074,7 @@ impl Bot {
         };
 
         // preload clickpack
+        log::info!("preloading clickpack");
         match &self.env.clickpack {
             Clickpack::Name(name) => {
                 let mut found = false;
@@ -1108,7 +1109,7 @@ impl Bot {
     #[inline]
     pub fn is_player2_obj(&self, player: *mut c_void /*PlayerObject*/) -> bool {
         // !self.playlayer.is_null() && self.playlayer.player2() == player
-        false // TODO
+        player as usize == (self.playlayer as usize + 2172)
     }
 
     fn get_pitch(&self) -> f64 {
