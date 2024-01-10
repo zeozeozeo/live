@@ -1254,7 +1254,7 @@ impl Bot {
     #[inline]
     fn time(&self) -> f64 {
         if self.conf.use_playlayer_time && !self.playlayer.is_null() {
-            return unsafe { *((self.playlayer as usize + 0x328) as *const f64) };
+            unsafe { *((self.playlayer as usize + 0x328) as *const f64) }
             // self.playlayer
             //     .to_option()
             //     .map_or_else(|| self.level_start.elapsed().as_secs_f64(), |p| p.time())
