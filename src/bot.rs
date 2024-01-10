@@ -715,7 +715,7 @@ pub struct Bot {
     pub startup_buffer_size: u32,
     pub used_minhook: bool,
     pub used_old_egui_hook: bool,
-    pub did_just_restart: bool,
+    pub restarted_ago: u8,
 }
 
 impl Default for Bot {
@@ -760,7 +760,7 @@ impl Default for Bot {
             startup_buffer_size,
             used_minhook,
             used_old_egui_hook,
-            did_just_restart: false,
+            restarted_ago: 0,
         }
     }
 }
@@ -1134,7 +1134,7 @@ impl Bot {
 
     pub fn on_reset(&mut self) {
         self.level_start = Instant::now();
-        self.did_just_restart = true;
+        self.restarted_ago = 0;
     }
 
     pub fn on_action(&mut self, push: bool, player2: bool) {
@@ -1143,7 +1143,12 @@ impl Bot {
         //     self.playlayer as usize,
         //     get_base()
         // );
-        if self.num_sounds == (0, 0) || self.playlayer.is_null() || !self.conf.enabled || self.did_just_restart {
+        if self.num_sounds == (0, 0) || self.playlayer.is_null() || !self.conf.enabled {
+            return;
+        }
+        if unsafe { *((self.playlayer as usize + 0x2f17) as *const bool) }
+            || unsafe { *((self.playlayer as usize + 0x328) as *const f64) == 0.0 }
+        {
             return;
         }
 
@@ -1248,16 +1253,15 @@ impl Bot {
 
     #[inline]
     fn time(&self) -> f64 {
-        /*
-        if self.conf.use_playlayer_time {
-            self.playlayer
-                .to_option()
-                .map_or_else(|| self.level_start.elapsed().as_secs_f64(), |p| p.time())
+        if self.conf.use_playlayer_time && !self.playlayer.is_null() {
+            return unsafe { *((self.playlayer as usize + 0x328) as *const f64) };
+            // self.playlayer
+            //     .to_option()
+            //     .map_or_else(|| self.level_start.elapsed().as_secs_f64(), |p| p.time())
         } else {
             self.level_start.elapsed().as_secs_f64()
         }
-        */
-        self.level_start.elapsed().as_secs_f64() // TODO
+        // self.level_start.elapsed().as_secs_f64() // TODO
     }
 
     fn open_clickbot_toggle_toast(&self, toasts: &mut Toasts) {

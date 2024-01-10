@@ -10,7 +10,7 @@ type FnQuit = unsafe extern "fastcall" fn(*mut c_void, *mut c_void);
 type FnReset = unsafe extern "fastcall" fn(*mut c_void, *mut c_void);
 type FnPushButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
 type FnReleaseButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
-type FnUpdate = unsafe extern "fastcall" fn (*mut c_void, *mut c_void, f32);
+type FnUpdate = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, f32);
 
 static_detour! {
     static Init: unsafe extern "fastcall" fn(*mut c_void, bool) -> bool;
@@ -109,16 +109,32 @@ unsafe extern "fastcall" fn reset(playlayer: *mut c_void, _edx: *mut c_void) {
 
 make_retour_fn!(reset, reset_retour(playlayer: *mut c_void, _edx: *mut c_void));
 
-unsafe extern "fastcall" fn push_button(player: *mut c_void, _edx: *mut c_void, button: i32) -> bool {
-    let res = call_hook!(PushButton(player, std::ptr::null_mut(), button), FnPushButton);
+unsafe extern "fastcall" fn push_button(
+    player: *mut c_void,
+    _edx: *mut c_void,
+    button: i32,
+) -> bool {
+    let res = call_hook!(
+        PushButton(player, std::ptr::null_mut(), button),
+        FnPushButton
+    );
+    // log::info!("pbutton: {button}");
     unsafe { BOT.on_action(true, BOT.is_player2_obj(player)) };
     res
 }
 
 make_retour_fn!(push_button, push_button_retour(player: *mut c_void, _edx: *mut c_void, button: i32) -> bool);
 
-unsafe extern "fastcall" fn release_button(player: *mut c_void, _edx: *mut c_void, button: i32) -> bool {
-    let res = call_hook!(ReleaseButton(player, std::ptr::null_mut(), button), FnReleaseButton);
+unsafe extern "fastcall" fn release_button(
+    player: *mut c_void,
+    _edx: *mut c_void,
+    button: i32,
+) -> bool {
+    let res = call_hook!(
+        ReleaseButton(player, std::ptr::null_mut(), button),
+        FnReleaseButton
+    );
+    // log::info!("rbutton: {button}");
     unsafe { BOT.on_action(false, BOT.is_player2_obj(player)) };
     res
 }
@@ -135,7 +151,7 @@ macro_rules! patch {
 
 unsafe extern "fastcall" fn update(basegamelayer: *mut c_void, _edx: *mut c_void, dt: f32) {
     call_hook!(Update(basegamelayer, std::ptr::null_mut(), dt), FnUpdate);
-    unsafe { BOT.did_just_restart = false };
+    unsafe { BOT.restarted_ago = BOT.restarted_ago.saturating_add(1) };
 }
 
 make_retour_fn!(update, update_retour(basegamelayer: *mut c_void, _edx: *mut c_void, dt: f32));
@@ -199,7 +215,7 @@ macro_rules! hook {
 }
 
 pub unsafe fn init_hooks() {
-        std::thread::sleep(std::time::Duration::from_secs(2));
+    std::thread::sleep(std::time::Duration::from_secs(2));
 
     hook!(PushButton, push_button, 0x2D0060);
     hook!(ReleaseButton, release_button, 0x2D02A0);
