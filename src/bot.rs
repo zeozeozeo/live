@@ -715,7 +715,7 @@ pub struct Bot {
     pub startup_buffer_size: u32,
     pub used_minhook: bool,
     pub used_old_egui_hook: bool,
-    pub restarted_ago: u8,
+    pub did_just_reset: bool,
 }
 
 impl Default for Bot {
@@ -760,7 +760,7 @@ impl Default for Bot {
             startup_buffer_size,
             used_minhook,
             used_old_egui_hook,
-            restarted_ago: 0,
+            did_just_reset: false,
         }
     }
 }
@@ -1134,7 +1134,7 @@ impl Bot {
 
     pub fn on_reset(&mut self) {
         self.level_start = Instant::now();
-        self.restarted_ago = 0;
+        self.did_just_reset = true;
     }
 
     pub fn on_action(&mut self, push: bool, player2: bool) {
@@ -1143,11 +1143,13 @@ impl Bot {
         //     self.playlayer as usize,
         //     get_base()
         // );
+        let did_just_reset = self.did_just_reset;
+        self.did_just_reset = false;
         if self.num_sounds == (0, 0) || self.playlayer.is_null() || !self.conf.enabled {
             return;
         }
         if unsafe { *((self.playlayer as usize + 0x2f17) as *const bool) }
-            || unsafe { *((self.playlayer as usize + 0x328) as *const f64) == 0.0 }
+            || unsafe { *((self.playlayer as usize + 0x328) as *const f64) < 0.05 }
         {
             return;
         }
@@ -1171,6 +1173,9 @@ impl Bot {
 
         // get click
         let (mut click, resolved_click_type) = self.get_random_click(click_type, player2);
+        if did_just_reset && resolved_click_type == ClickType::MicroRelease {
+            return;
+        }
         let pitch = self.get_pitch() * self.conf.click_speedhack;
         // if self.conf.sync_speed_with_game {
         //     pitch *= gd_audio_pitch() as f64;

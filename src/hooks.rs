@@ -118,7 +118,7 @@ unsafe extern "fastcall" fn push_button(
         PushButton(player, std::ptr::null_mut(), button),
         FnPushButton
     );
-    // log::info!("pbutton: {button}");
+    //log::info!("pbutton: {button}");
     unsafe { BOT.on_action(true, BOT.is_player2_obj(player)) };
     res
 }
@@ -149,12 +149,12 @@ macro_rules! patch {
     };
 }
 
-unsafe extern "fastcall" fn update(basegamelayer: *mut c_void, _edx: *mut c_void, dt: f32) {
-    call_hook!(Update(basegamelayer, std::ptr::null_mut(), dt), FnUpdate);
-    unsafe { BOT.restarted_ago = BOT.restarted_ago.saturating_add(1) };
-}
-
-make_retour_fn!(update, update_retour(basegamelayer: *mut c_void, _edx: *mut c_void, dt: f32));
+// unsafe extern "fastcall" fn update(basegamelayer: *mut c_void, _edx: *mut c_void, dt: f32) {
+//     call_hook!(Update(basegamelayer, std::ptr::null_mut(), dt), FnUpdate);
+//     unsafe { BOT.restarted_ago = BOT.restarted_ago.saturating_add(1) };
+// }
+//
+// make_retour_fn!(update, update_retour(basegamelayer: *mut c_void, _edx: *mut c_void, dt: f32));
 
 /// GetModuleHandle(NULL)
 #[inline]
@@ -217,11 +217,11 @@ macro_rules! hook {
 pub unsafe fn init_hooks() {
     std::thread::sleep(std::time::Duration::from_secs(2));
 
-    hook!(PushButton, push_button, 0x2D0060);
-    hook!(ReleaseButton, release_button, 0x2D02A0);
+    hook!(PushButton, push_button, 0x2D1870);
+    hook!(ReleaseButton, release_button, 0x2D1AB0);
     // hook!(Init, init, 0x18cc80);
-    hook!(Reset, reset, 0x2E8200);
-    hook!(Update, update, 0x1BA700);
+    hook!(Reset, reset, 0x2E9B40);
+    // hook!(Update, update, 0x1BA700);
 
     if unsafe { BOT.used_minhook } {
         log::info!("enabling all minhook hooks");
@@ -247,6 +247,8 @@ macro_rules! disable_hooks {
 
 pub unsafe fn disable_hooks() {
     log::info!("disabling hooks");
+
+    disable_hooks!(PushButton, ReleaseButton, Reset);
 
     if unsafe { BOT.used_minhook } {
         log::info!("uninitializing minhook");
