@@ -1,5 +1,5 @@
 use crate::{
-    hooks::{self, get_base},
+    hooks::{self},
     utils,
 };
 use anyhow::Result;
@@ -554,6 +554,12 @@ pub enum Stage {
     Clickpack,
     Audio,
     Options,
+    Cheats,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Default)]
+pub struct Cheats {
+    pub noclip: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
@@ -600,6 +606,8 @@ pub struct Config {
     pub use_minhook: bool,
     #[serde(default = "bool::default")]
     pub use_old_egui_hook: bool,
+    #[serde(default = "Cheats::default")]
+    pub cheats: Cheats,
 }
 
 impl Config {
@@ -638,6 +646,7 @@ impl Default for Config {
             hook_wait: false,
             use_minhook: true,
             use_old_egui_hook: false,
+            cheats: Cheats::default(),
         }
     }
 }
@@ -988,25 +997,25 @@ impl Bot {
         Ok(())
     }
 
-    fn fmod_apply_buffer_size(&self) -> Result<()> {
-        /*
-        unsafe {
-            FMOD_System_SetStreamBufferSize(self.system, self.conf.buffer_size, FMOD_TIMEUNIT_PCM)
-                .fmod_result()?;
-
-            let mut numbuffers = 0i32;
-            let mut bufferlength = 0u32;
-            FMOD_System_GetDSPBufferSize(self.system, &mut bufferlength, &mut numbuffers)
-                .fmod_result()?;
-            log::info!(
-                "FMOD_System_GetDSPBufferSize: bufferlength: {bufferlength}, numbuffers: {numbuffers}"
-            );
-            FMOD_System_SetDSPBufferSize(self.system, self.conf.buffer_size, numbuffers)
-                .fmod_result()?;
-        }
-        */
-        Ok(())
-    }
+    //fn fmod_apply_buffer_size(&self) -> Result<()> {
+    //    /*
+    //    unsafe {
+    //        FMOD_System_SetStreamBufferSize(self.system, self.conf.buffer_size, FMOD_TIMEUNIT_PCM)
+    //            .fmod_result()?;
+    //
+    //        let mut numbuffers = 0i32;
+    //        let mut bufferlength = 0u32;
+    //        FMOD_System_GetDSPBufferSize(self.system, &mut bufferlength, &mut numbuffers)
+    //            .fmod_result()?;
+    //        log::info!(
+    //            "FMOD_System_GetDSPBufferSize: bufferlength: {bufferlength}, numbuffers: {numbuffers}"
+    //        );
+    //        FMOD_System_SetDSPBufferSize(self.system, self.conf.buffer_size, numbuffers)
+    //            .fmod_result()?;
+    //    }
+    //    */
+    //    Ok(())
+    //}
 
     pub fn release_fmod(&mut self) {
         /*
@@ -1143,8 +1152,7 @@ impl Bot {
         //     self.playlayer as usize,
         //     get_base()
         // );
-        let did_just_reset = self.did_just_reset;
-        self.did_just_reset = false;
+        //log::info!("push: {push}");
         if self.num_sounds == (0, 0) || self.playlayer.is_null() || !self.conf.enabled {
             return;
         }
@@ -1173,9 +1181,6 @@ impl Bot {
 
         // get click
         let (mut click, resolved_click_type) = self.get_random_click(click_type, player2);
-        if did_just_reset && resolved_click_type == ClickType::MicroRelease {
-            return;
-        }
         let pitch = self.get_pitch() * self.conf.click_speedhack;
         // if self.conf.sync_speed_with_game {
         //     pitch *= gd_audio_pitch() as f64;
@@ -1368,6 +1373,7 @@ impl Bot {
                 ui.selectable_value(&mut self.conf.stage, Stage::Clickpack, "Clickpack");
                 ui.selectable_value(&mut self.conf.stage, Stage::Audio, "Audio");
                 ui.selectable_value(&mut self.conf.stage, Stage::Options, "Options");
+                ui.selectable_value(&mut self.conf.stage, Stage::Cheats, "Cheats");
             });
             ui.separator();
 
@@ -1388,12 +1394,17 @@ impl Bot {
                         });
                     }
                     Stage::Options => self.show_options_window(ui, modal.clone(), &mut toasts),
+                    Stage::Cheats => self.show_cheats_window(ui),
                 };
             });
         });
 
         toasts.show(ctx);
         modal.lock().unwrap().show_dialog();
+    }
+
+    fn show_cheats_window(&mut self, ui: &mut egui::Ui) {
+        ui.checkbox(&mut self.conf.cheats.noclip, "Noclip");
     }
 
     pub fn maybe_alloc_console(&self) {

@@ -3,14 +3,15 @@ use crate::BOT;
 use retour::static_detour;
 use std::ffi::c_void;
 
-pub const IS_22: bool = true;
+//pub const IS_22: bool = true;
 
-type FnInit = unsafe extern "fastcall" fn(*mut c_void, bool) -> bool;
-type FnQuit = unsafe extern "fastcall" fn(*mut c_void, *mut c_void);
+//type FnInit = unsafe extern "fastcall" fn(*mut c_void, bool) -> bool;
+//type FnQuit = unsafe extern "fastcall" fn(*mut c_void, *mut c_void);
 type FnReset = unsafe extern "fastcall" fn(*mut c_void, *mut c_void);
 type FnPushButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
 type FnReleaseButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
-type FnUpdate = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, f32);
+//type FnUpdate = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, f32);
+type FnDestroyPlayer = unsafe extern "fastcall" fn(*mut c_void) -> i32;
 
 static_detour! {
     static Init: unsafe extern "fastcall" fn(*mut c_void, bool) -> bool;
@@ -19,6 +20,7 @@ static_detour! {
     static PushButton: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
     static ReleaseButton: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
     static Update: unsafe extern "fastcall" fn (*mut c_void, *mut c_void, f32);
+    static DestroyPlayer: unsafe extern "fastcall" fn(*mut c_void) -> i32;
 }
 
 macro_rules! make_minhook_statics {
@@ -31,12 +33,13 @@ macro_rules! make_minhook_statics {
 }
 
 make_minhook_statics!(
-    Init_MinHook,
-    Quit_MinHook,
+    // Init_MinHook,
+    // Quit_MinHook,
     Reset_MinHook,
     PushButton_MinHook,
     ReleaseButton_MinHook,
-    Update_MinHook
+    // Update_MinHook,
+    DestroyPlayer_MinHook
 );
 
 /// Create a function wrapper without a specified calling convention
@@ -58,41 +61,41 @@ macro_rules! call_hook {
     };
 }
 
-#[inline]
-fn get_game_manager() -> usize {
-    unsafe {
-        (std::mem::transmute::<usize, unsafe extern "stdcall" fn() -> usize>(get_base() + 1206560))(
-        )
-    }
-}
+//#[inline]
+//fn get_game_manager() -> usize {
+//    unsafe {
+//        (std::mem::transmute::<usize, unsafe extern "stdcall" fn() -> usize>(get_base() + 1206560))(
+//        )
+//    }
+//}
+//
+//fn get_game_variable(var: &str) -> bool {
+//    let var = std::ffi::CString::new(var).unwrap(); // convert to c string
+//    unsafe {
+//        (std::mem::transmute::<usize, unsafe extern "fastcall" fn(usize, usize, *const u8) -> bool>(
+//            get_base() + 5145320,
+//        ))(get_game_manager(), 0, var.as_ptr() as *const u8)
+//    }
+//}
 
-fn get_game_variable(var: &str) -> bool {
-    let var = std::ffi::CString::new(var).unwrap(); // convert to c string
-    unsafe {
-        (std::mem::transmute::<usize, unsafe extern "fastcall" fn(usize, usize, *const u8) -> bool>(
-            get_base() + 5145320,
-        ))(get_game_manager(), 0, var.as_ptr() as *const u8)
-    }
-}
-
-unsafe extern "fastcall" fn init(playlayer: *mut c_void, something: bool) -> bool {
-    let res = call_hook!(Init(playlayer, something), FnInit);
-    log::debug!("init");
-    unsafe { BOT.playlayer = playlayer };
-    unsafe { BOT.on_init() };
-    res
-}
-
-make_retour_fn!(init, init_retour(gamelevel: *mut c_void, dead: bool) -> bool);
-
-unsafe extern "fastcall" fn quit(playlayer: *mut c_void, _edx: *mut c_void) {
-    call_hook!(Quit(playlayer, std::ptr::null_mut()), FnQuit);
-
-    // set playlayer to null
-    unsafe { BOT.playlayer = std::ptr::null_mut() };
-}
-
-make_retour_fn!(quit, quit_retour(playlayer: *mut c_void, _edx: *mut c_void));
+//unsafe extern "fastcall" fn init(playlayer: *mut c_void, something: bool) -> bool {
+//    let res = call_hook!(Init(playlayer, something), FnInit);
+//    log::debug!("init");
+//    unsafe { BOT.playlayer = playlayer };
+//    unsafe { BOT.on_init() };
+//    res
+//}
+//
+//make_retour_fn!(init, init_retour(gamelevel: *mut c_void, dead: bool) -> bool);
+//
+//unsafe extern "fastcall" fn quit(playlayer: *mut c_void, _edx: *mut c_void) {
+//    call_hook!(Quit(playlayer, std::ptr::null_mut()), FnQuit);
+//
+//    // set playlayer to null
+//    unsafe { BOT.playlayer = std::ptr::null_mut() };
+//}
+//
+//make_retour_fn!(quit, quit_retour(playlayer: *mut c_void, _edx: *mut c_void));
 
 unsafe extern "fastcall" fn reset(playlayer: *mut c_void, _edx: *mut c_void) {
     call_hook!(Reset(playlayer, std::ptr::null_mut()), FnReset);
@@ -141,13 +144,22 @@ unsafe extern "fastcall" fn release_button(
 
 make_retour_fn!(release_button, release_button_retour(player: *mut c_void, _edx: *mut c_void, button: i32) -> bool);
 
-macro_rules! patch {
-    ($addr:expr, $data:expr) => {
-        let len = $data.len();
-        let _ = patch_mem($addr, $data)
-            .map_err(|e| log::error!("failed to write {len} bytes at {:#x}: {e}", $addr));
-    };
+unsafe extern "fastcall" fn destroy_player(this: *mut c_void) -> i32 {
+    if BOT.conf.cheats.noclip {
+        return 0;
+    }
+    return call_hook!(DestroyPlayer(this), FnDestroyPlayer);
 }
+
+make_retour_fn!(destroy_player, destroy_player_retour(this: *mut c_void) -> i32);
+
+//macro_rules! patch {
+//    ($addr:expr, $data:expr) => {
+//        let len = $data.len();
+//        let _ = patch_mem($addr, $data)
+//            .map_err(|e| log::error!("failed to write {len} bytes at {:#x}: {e}", $addr));
+//    };
+//}
 
 // unsafe extern "fastcall" fn update(basegamelayer: *mut c_void, _edx: *mut c_void, dt: f32) {
 //     call_hook!(Update(basegamelayer, std::ptr::null_mut(), dt), FnUpdate);
@@ -168,30 +180,30 @@ pub fn get_base() -> usize {
 }
 
 /// Copies the given data to the given address in memory.
-fn patch_mem(address: usize, data: &[u8]) -> windows::core::Result<()> {
-    use windows::Win32::System::Diagnostics::Debug::WriteProcessMemory;
-    use windows::Win32::System::Memory::{
-        VirtualProtectEx, PAGE_EXECUTE_READWRITE, PAGE_PROTECTION_FLAGS,
-    };
-    use windows::Win32::System::Threading::GetCurrentProcess;
-    unsafe {
-        let mut old_prot = PAGE_PROTECTION_FLAGS(0);
-        VirtualProtectEx(
-            GetCurrentProcess(),
-            address as _,
-            256,
-            PAGE_EXECUTE_READWRITE,
-            &mut old_prot as _,
-        )?;
-        WriteProcessMemory(
-            GetCurrentProcess(),
-            address as _,
-            data.as_ptr() as _,
-            data.len(),
-            None,
-        )
-    }
-}
+//fn patch_mem(address: usize, data: &[u8]) -> windows::core::Result<()> {
+//    use windows::Win32::System::Diagnostics::Debug::WriteProcessMemory;
+//    use windows::Win32::System::Memory::{
+//        VirtualProtectEx, PAGE_EXECUTE_READWRITE, PAGE_PROTECTION_FLAGS,
+//    };
+//    use windows::Win32::System::Threading::GetCurrentProcess;
+//    unsafe {
+//        let mut old_prot = PAGE_PROTECTION_FLAGS(0);
+//        VirtualProtectEx(
+//            GetCurrentProcess(),
+//            address as _,
+//            256,
+//            PAGE_EXECUTE_READWRITE,
+//            &mut old_prot as _,
+//        )?;
+//        WriteProcessMemory(
+//            GetCurrentProcess(),
+//            address as _,
+//            data.as_ptr() as _,
+//            data.len(),
+//            None,
+//        )
+//    }
+//}
 
 macro_rules! hook {
     ($static:ident, $detour:ident, $addr:expr) => {
@@ -217,11 +229,12 @@ macro_rules! hook {
 pub unsafe fn init_hooks() {
     std::thread::sleep(std::time::Duration::from_secs(2));
 
-    hook!(PushButton, push_button, 0x2D1870);
-    hook!(ReleaseButton, release_button, 0x2D1AB0);
+    hook!(PushButton, push_button, 0x2D1F70 - 0x240);
+    hook!(ReleaseButton, release_button, 0x2D1F70);
     // hook!(Init, init, 0x18cc80);
-    hook!(Reset, reset, 0x2E9B40);
+    hook!(Reset, reset, 0x2EA130);
     // hook!(Update, update, 0x1BA700);
+    hook!(DestroyPlayer, destroy_player, 0x27AE40);
 
     if unsafe { BOT.used_minhook } {
         log::info!("enabling all minhook hooks");
