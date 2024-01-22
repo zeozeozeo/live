@@ -137,6 +137,15 @@ impl ClickType {
     pub fn preferred(self) -> [Self; 8] {
         use ClickType::*;
 
+        // HardClick => HardClick, Click, SoftClick, MicroClick, HardRelease, Release, SoftRelease, MicroRelease
+        // HardRelease => HardRelease, Release, SoftRelease, MicroRelease, HardClick, Click, SoftClick, MicroClick
+        // Click => Click, HardClick, SoftClick, MicroClick, Release, HardRelease, SoftRelease, MicroRelease
+        // Release => Release, HardRelease, SoftRelease, MicroRelease, Click, HardClick, SoftClick, MicroClick
+        // SoftClick => SoftClick, MicroClick, Click, HardClick, SoftRelease, MicroRelease, Release, HardRelease
+        // SoftRelease => SoftRelease, MicroRelease, Release, HardRelease, SoftClick, MicroClick, Click, HardClick
+        // MicroClick => MicroClick, SoftClick, Click, HardClick, MicroRelease, SoftRelease, Release, HardRelease
+        // MicroRelease => MicroRelease, SoftRelease, Release, HardRelease, MicroClick, SoftClick, Click, HardClick
+
         match self {
             HardClick => [
                 HardClick,

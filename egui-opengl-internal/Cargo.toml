@@ -14,7 +14,7 @@ default-target = "x86_64-pc-windows-msvc"
 targets = ["i686-pc-windows-msvc", "x86_64-pc-windows-msvc"]
 
 [dependencies]
-egui = "0.24.1"
+egui = "0.25.0"
 gl = "0.14.0"
 spin = { version = "0.9", optional = true, features = ["lock_api"] }
 parking_lot = { version = "0.12", optional = true }

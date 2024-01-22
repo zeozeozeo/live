@@ -227,6 +227,7 @@ impl InputCollector {
                         modifiers,
                         key,
                         repeat: lparam & (KF_REPEAT as isize) > 0,
+                        physical_key: None,
                     });
                 }
                 InputResult::Key
@@ -241,6 +242,7 @@ impl InputCollector {
                         modifiers,
                         key,
                         repeat: lparam & (KF_REPEAT as isize) > 0,
+                        physical_key: None,
                     });
                 }
                 InputResult::Key

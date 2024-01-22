@@ -1,7 +1,6 @@
 use clipboard::{windows_clipboard::WindowsClipboardContext, ClipboardProvider};
 use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput, Rect, Vec2};
-
-use std::rc::Rc;
+use std::sync::Arc;
 use windows::{
     Wdk::System::SystemInformation::NtQuerySystemTime,
     Win32::{
@@ -99,7 +98,7 @@ pub unsafe fn init(window_handle: HDC) -> Result<(), Error> {
         return Err(Error::CtxSwitch);
     }
 
-    let gl = Rc::new(unsafe {
+    let gl = Arc::new(unsafe {
         egui_glow::glow::Context::from_loader_function_cstr(|s| {
             let result = wglGetProcAddress(windows::core::PCSTR::from_raw(s.as_ptr() as _));
             if result.is_some() {
@@ -370,6 +369,7 @@ pub fn on_event(umsg: u32, wparam: usize, lparam: isize) -> Result<bool, Error> 
                     modifiers,
                     key,
                     repeat: lparam & (KF_REPEAT as isize) > 0,
+                    physical_key: None,
                 });
             }
         }
@@ -383,6 +383,7 @@ pub fn on_event(umsg: u32, wparam: usize, lparam: isize) -> Result<bool, Error> 
                     modifiers,
                     key,
                     repeat: lparam & (KF_REPEAT as isize) > 0,
+                    physical_key: None,
                 });
             }
         }

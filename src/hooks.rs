@@ -1,7 +1,7 @@
 use crate::BOT;
 // use geometrydash::{get_base, patch_mem, AddressUtils, GameManager, PlayLayer, PlayerObject, Ptr};
 use retour::static_detour;
-use std::ffi::c_void;
+use std::{ffi::c_void, sync::Once};
 
 //pub const IS_22: bool = true;
 
@@ -12,6 +12,7 @@ type FnPushButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -
 type FnReleaseButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
 //type FnUpdate = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, f32);
 type FnDestroyPlayer = unsafe extern "fastcall" fn(*mut c_void) -> i32;
+type FnHandleButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32, i32, bool) -> i32;
 
 static_detour! {
     static Init: unsafe extern "fastcall" fn(*mut c_void, bool) -> bool;
@@ -21,6 +22,7 @@ static_detour! {
     static ReleaseButton: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
     static Update: unsafe extern "fastcall" fn (*mut c_void, *mut c_void, f32);
     static DestroyPlayer: unsafe extern "fastcall" fn(*mut c_void) -> i32;
+    static HandleButton: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32, i32, bool) -> i32;
 }
 
 macro_rules! make_minhook_statics {
@@ -39,7 +41,8 @@ make_minhook_statics!(
     PushButton_MinHook,
     ReleaseButton_MinHook,
     // Update_MinHook,
-    DestroyPlayer_MinHook
+    DestroyPlayer_MinHook,
+    HandleButton_MinHook
 );
 
 /// Create a function wrapper without a specified calling convention
@@ -52,9 +55,10 @@ macro_rules! make_retour_fn {
 }
 
 macro_rules! call_hook {
-    ($static:ident($($arg:expr),+), $typ:ty) => {
+    ($static:ident($($arg:expr),+)) => {
         if unsafe { BOT.used_minhook } {
-            unsafe { ::std::mem::transmute::<*mut ::std::ffi::c_void, $typ>(concat_idents!($static, _MinHook))($($arg),+) }
+            unsafe {
+                ::std::mem::transmute::<*mut ::std::ffi::c_void, concat_idents!(Fn, $static)>(concat_idents!($static, _MinHook))($($arg),+) }
         } else {
             unsafe { $static.call($($arg),+) }
         }
@@ -79,7 +83,7 @@ macro_rules! call_hook {
 //}
 
 //unsafe extern "fastcall" fn init(playlayer: *mut c_void, something: bool) -> bool {
-//    let res = call_hook!(Init(playlayer, something), FnInit);
+//    let res = call_hook!(Init(playlayer, something));
 //    log::debug!("init");
 //    unsafe { BOT.playlayer = playlayer };
 //    unsafe { BOT.on_init() };
@@ -89,7 +93,7 @@ macro_rules! call_hook {
 //make_retour_fn!(init, init_retour(gamelevel: *mut c_void, dead: bool) -> bool);
 //
 //unsafe extern "fastcall" fn quit(playlayer: *mut c_void, _edx: *mut c_void) {
-//    call_hook!(Quit(playlayer, std::ptr::null_mut()), FnQuit);
+//    call_hook!(Quit(playlayer, std::ptr::null_mut()));
 //
 //    // set playlayer to null
 //    unsafe { BOT.playlayer = std::ptr::null_mut() };
@@ -98,7 +102,7 @@ macro_rules! call_hook {
 //make_retour_fn!(quit, quit_retour(playlayer: *mut c_void, _edx: *mut c_void));
 
 unsafe extern "fastcall" fn reset(playlayer: *mut c_void, _edx: *mut c_void) {
-    call_hook!(Reset(playlayer, std::ptr::null_mut()), FnReset);
+    call_hook!(Reset(playlayer, std::ptr::null_mut()));
 
     if unsafe { BOT.playlayer.is_null() } && !playlayer.is_null() {
         log::debug!("reset init");
@@ -117,11 +121,10 @@ unsafe extern "fastcall" fn push_button(
     _edx: *mut c_void,
     button: i32,
 ) -> bool {
-    let res = call_hook!(
-        PushButton(player, std::ptr::null_mut(), button),
-        FnPushButton
-    );
+    let res = call_hook!(PushButton(player, std::ptr::null_mut(), button));
     //log::info!("pbutton: {button}");
+    let is_p2 = BOT.is_player2_obj(player);
+
     unsafe { BOT.on_action(true, BOT.is_player2_obj(player)) };
     res
 }
@@ -133,10 +136,7 @@ unsafe extern "fastcall" fn release_button(
     _edx: *mut c_void,
     button: i32,
 ) -> bool {
-    let res = call_hook!(
-        ReleaseButton(player, std::ptr::null_mut(), button),
-        FnReleaseButton
-    );
+    let res = call_hook!(ReleaseButton(player, std::ptr::null_mut(), button));
     // log::info!("rbutton: {button}");
     unsafe { BOT.on_action(false, BOT.is_player2_obj(player)) };
     res
@@ -148,10 +148,40 @@ unsafe extern "fastcall" fn destroy_player(this: *mut c_void) -> i32 {
     if BOT.conf.cheats.noclip {
         return 0;
     }
-    return call_hook!(DestroyPlayer(this), FnDestroyPlayer);
+    return call_hook!(DestroyPlayer(this));
 }
 
 make_retour_fn!(destroy_player, destroy_player_retour(this: *mut c_void) -> i32);
+
+unsafe extern "fastcall" fn handle_button(
+    basegamelayer: *mut c_void,
+    _edx: *mut c_void,
+    push: i32,
+    button: i32,
+    is_player1: bool,
+) -> i32 {
+    let res = call_hook!(HandleButton(
+        basegamelayer,
+        std::ptr::null_mut(),
+        push,
+        button,
+        is_player1
+    ));
+    // log::info!("handle_button: {push}, {button}, {is_player1}");
+    unsafe { BOT.on_action(push != 0, !is_player1) };
+    res
+}
+
+make_retour_fn!(
+    handle_button,
+    handle_button_retour(
+        basegamelayer: *mut c_void,
+        _edx: *mut c_void,
+        a2: i32,
+        a3: i32,
+        button: bool
+    ) -> i32
+);
 
 //macro_rules! patch {
 //    ($addr:expr, $data:expr) => {
@@ -162,7 +192,7 @@ make_retour_fn!(destroy_player, destroy_player_retour(this: *mut c_void) -> i32)
 //}
 
 // unsafe extern "fastcall" fn update(basegamelayer: *mut c_void, _edx: *mut c_void, dt: f32) {
-//     call_hook!(Update(basegamelayer, std::ptr::null_mut(), dt), FnUpdate);
+//     call_hook!(Update(basegamelayer, std::ptr::null_mut(), dt));
 //     unsafe { BOT.restarted_ago = BOT.restarted_ago.saturating_add(1) };
 // }
 //
@@ -171,12 +201,19 @@ make_retour_fn!(destroy_player, destroy_player_retour(this: *mut c_void) -> i32)
 /// GetModuleHandle(NULL)
 #[inline]
 pub fn get_base() -> usize {
-    use windows::core::PCSTR;
-    use windows::Win32::System::LibraryLoader::GetModuleHandleA;
-    unsafe {
-        let hmod = GetModuleHandleA(PCSTR(std::ptr::null())).unwrap();
-        hmod.0 as usize
-    }
+    static ONCE: Once = Once::new();
+    static mut BASE: usize = 0;
+    ONCE.call_once(|| {
+        use windows::core::PCSTR;
+        use windows::Win32::System::LibraryLoader::GetModuleHandleA;
+        unsafe {
+            BASE = {
+                let hmod = GetModuleHandleA(PCSTR(std::ptr::null())).unwrap();
+                hmod.0 as usize
+            };
+        }
+    });
+    unsafe { BASE }
 }
 
 /// Copies the given data to the given address in memory.
@@ -227,10 +264,14 @@ macro_rules! hook {
 }
 
 pub unsafe fn init_hooks() {
-    std::thread::sleep(std::time::Duration::from_secs(2));
+    // std::thread::sleep(std::time::Duration::from_secs(2));
 
-    hook!(PushButton, push_button, 0x2D1F70 - 0x240);
-    hook!(ReleaseButton, release_button, 0x2D1F70);
+    if unsafe { BOT.used_alternate_hook } {
+        hook!(HandleButton, handle_button, 0x1b69f0);
+    } else {
+        hook!(PushButton, push_button, 0x2D1F70 - 0x240);
+        hook!(ReleaseButton, release_button, 0x2D1F70);
+    }
     // hook!(Init, init, 0x18cc80);
     hook!(Reset, reset, 0x2EA130);
     // hook!(Update, update, 0x1BA700);
@@ -248,11 +289,11 @@ macro_rules! disable_hooks {
             if unsafe { BOT.used_minhook } {
                 log::info!("disabling {} minhook hook", stringify!($static));
                 let _ = ::minhook::MinHook::disable_hook(concat_idents!($static, _MinHook))
-                    .map_err(|e| log::error!("failed to disable {} minhook hook: {e:?}", stringify!($static)));
+                    .map_err(|e| ::log::error!("failed to disable {} minhook hook: {e:?}", stringify!($static)));
             } else {
                 log::info!("disabling {} retour hook", stringify!($static));
                 let _ = unsafe { $static.disable() }
-                    .map_err(|e| log::error!("failed to disable {} hook: {e}", stringify!($static)));
+                    .map_err(|e| ::log::error!("failed to disable {} hook: {e}", stringify!($static)));
             }
         )*
     };
@@ -261,7 +302,12 @@ macro_rules! disable_hooks {
 pub unsafe fn disable_hooks() {
     log::info!("disabling hooks");
 
-    disable_hooks!(PushButton, ReleaseButton, Reset);
+    disable_hooks!(Reset, DestroyPlayer);
+    if unsafe { BOT.used_alternate_hook } {
+        disable_hooks!(HandleButton);
+    } else {
+        disable_hooks!(PushButton, ReleaseButton);
+    }
 
     if unsafe { BOT.used_minhook } {
         log::info!("uninitializing minhook");

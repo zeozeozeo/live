@@ -3,6 +3,7 @@
 mod bot;
 mod hooks;
 mod utils;
+mod game_manager;
 
 use bot::BOT;
 use egui_opengl_internal::OpenGLApp;
