@@ -1129,7 +1129,18 @@ impl Bot {
     #[inline]
     pub fn is_player2_obj(&self, player: *mut c_void /*PlayerObject*/) -> bool {
         // !self.playlayer.is_null() && self.playlayer.player2() == player
-        player as usize == (self.playlayer as usize + 2172)
+        if self.playlayer.is_null() {
+            return false;
+        }
+        let player2 = (self.playlayer as usize + 2172) as *const usize;
+        player as usize == unsafe { *player2 }
+    }
+
+    pub fn is_2player(&self) -> bool {
+        if self.playlayer.is_null() {
+            return false;
+        }
+        unsafe { *((self.playlayer as usize + 0x880 + 0x115) as *const bool) }
     }
 
     fn get_pitch(&self) -> f64 {
