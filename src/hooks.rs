@@ -124,8 +124,8 @@ unsafe extern "fastcall" fn push_button(
     let res = call_hook!(PushButton(player, std::ptr::null_mut(), button));
     //log::info!("pbutton: {button}");
     let is_p2 = BOT.is_player2_obj(player);
-
-    unsafe { BOT.on_action(true, BOT.is_player2_obj(player)) };
+    let is_2player = BOT.is_2player();
+    unsafe { BOT.on_action(true, is_p2 && is_2player) };
     res
 }
 

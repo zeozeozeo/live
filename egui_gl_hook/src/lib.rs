@@ -369,7 +369,7 @@ pub fn on_event(umsg: u32, wparam: usize, lparam: isize) -> Result<bool, Error> 
                     modifiers,
                     key,
                     repeat: lparam & (KF_REPEAT as isize) > 0,
-                    physical_key: None,
+                    physical_key: Some(key),
                 });
             }
         }
@@ -383,7 +383,7 @@ pub fn on_event(umsg: u32, wparam: usize, lparam: isize) -> Result<bool, Error> 
                     modifiers,
                     key,
                     repeat: lparam & (KF_REPEAT as isize) > 0,
-                    physical_key: None,
+                    physical_key: Some(key),
                 });
             }
         }
@@ -439,12 +439,17 @@ fn alter_modifiers(state: &mut EguiState, new: Modifiers) {
     }
 }
 
+/// https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
 fn get_key(wparam: usize) -> Option<Key> {
     match wparam {
-        0x30..=0x39 => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x1F)) },
-        0x41..=0x5A => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x26)) },
-        0x60..=0x69 => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x4F)) },
-        0x70..=0x83 => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x3B)) },
+        // number keys
+        0x30..=0x39 => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x13)) },
+        // letter keys
+        0x41..=0x5A => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x1A)) },
+        // numpad keys
+        0x60..=0x69 => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x43)) },
+        // f1-f20
+        0x70..=0x83 => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x2F)) },
         _ => match VIRTUAL_KEY(wparam as u16) {
             VK_DOWN => Some(Key::ArrowDown),
             VK_LEFT => Some(Key::ArrowLeft),

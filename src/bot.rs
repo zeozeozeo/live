@@ -1,4 +1,5 @@
 use crate::{
+    game_manager::GameManager,
     hooks::{self},
     utils,
 };
@@ -246,6 +247,7 @@ impl ClickType {
 #[derive(Clone)]
 pub struct SoundWrapper {
     sound: Sound,
+    pathbuf: PathBuf,
     // fmod_sound: *mut FMOD_SOUND,
 }
 
@@ -253,7 +255,10 @@ impl SoundWrapper {
     pub fn from_path(path: &Path) -> Result<Self> {
         // load kittyaudio sound
         let sound = Sound::from_path(path)?;
-        Ok(Self { sound })
+        Ok(Self {
+            sound,
+            pathbuf: path.to_path_buf(),
+        })
     }
 
     fn free(&mut self) {
@@ -290,6 +295,7 @@ pub struct Sounds {
     pub softreleases: Vec<SoundWrapper>,
     pub microclicks: Vec<SoundWrapper>,
     pub microreleases: Vec<SoundWrapper>,
+    pub last_sound_path: PathBuf,
 }
 
 fn read_clicks_in_directory(dir: &Path) -> Vec<SoundWrapper> {
@@ -398,7 +404,7 @@ impl Sounds {
         self.num_sounds() > 0
     }
 
-    pub fn random_sound(&self, typ: ClickType) -> Option<(SoundWrapper, ClickType)> {
+    pub fn random_sound(&mut self, typ: ClickType) -> Option<(SoundWrapper, ClickType)> {
         let thread_rng = &mut rand::thread_rng();
         for typ in typ.preferred() {
             let sound = match typ {
@@ -413,6 +419,7 @@ impl Sounds {
                 _ => None,
             };
             if let Some(sound) = sound {
+                self.last_sound_path = sound.pathbuf.clone();
                 return Some((sound.clone(), typ));
             }
         }
@@ -602,6 +609,8 @@ pub struct Config {
     #[serde(default = "bool::default")]
     pub cut_sounds: bool,
     #[serde(default = "bool::default")]
+    pub force_2player: bool,
+    #[serde(default = "bool::default")]
     pub cut_by_releases: bool,
     #[serde(default = "float_one")]
     pub click_speedhack: f64,
@@ -648,6 +657,7 @@ impl Default for Config {
             use_fmod: false,
             use_playlayer_time: false,
             cut_sounds: false,
+            force_2player: false,
             cut_by_releases: false,
             click_speedhack: 1.0,
             noise_speedhack: 1.0,
@@ -733,15 +743,15 @@ pub struct Bot {
     pub startup_buffer_size: u32,
     pub used_minhook: bool,
     pub used_old_egui_hook: bool,
-    pub did_just_reset: bool,
+    pub selected_clickpack_path: PathBuf,
 }
 
 impl Default for Bot {
     fn default() -> Self {
         let conf = Config::load().unwrap_or_default().fixup();
-        let use_alternate_hook = conf.use_alternate_hook;
+        let used_alternate_hook = conf.use_alternate_hook;
         let startup_buffer_size = conf.buffer_size;
-        let used_minhook = true; // conf.used_minhook TODO
+        let used_minhook = conf.use_minhook;
         let used_old_egui_hook = conf.use_old_egui_hook;
         Self {
             conf: conf.clone(),
@@ -768,7 +778,7 @@ impl Default for Bot {
             clickpacks: vec![],
             last_clickpack_reload: Instant::now(),
             level_start: Instant::now(),
-            used_alternate_hook: use_alternate_hook,
+            used_alternate_hook,
             // system: std::ptr::null_mut(),
             // channel: std::ptr::null_mut(),
             env: Env::load(),
@@ -778,7 +788,7 @@ impl Default for Bot {
             startup_buffer_size,
             used_minhook,
             used_old_egui_hook,
-            did_just_reset: false,
+            selected_clickpack_path: PathBuf::new(),
         }
     }
 }
@@ -874,6 +884,7 @@ impl Bot {
             noise_sound.set_playback_rate(PlaybackRate::Factor(0.0));
         }
         self.selected_clickpack.clear();
+        self.selected_clickpack_path.clear();
     }
 
     pub fn load_clickpack(&mut self, clickpack_dir: &Path) -> Result<()> {
@@ -910,6 +921,7 @@ impl Bot {
             .to_str()
             .unwrap()
             .to_string();
+        self.selected_clickpack_path = clickpack_dir.to_path_buf();
         log::info!(
             "loaded clickpack \"{}\", {} sounds",
             self.selected_clickpack,
@@ -936,7 +948,7 @@ impl Bot {
         self.players.0.has_sounds() || self.players.1.has_sounds()
     }
 
-    fn get_random_click(&self, typ: ClickType, player2: bool) -> (SoundWrapper, ClickType) {
+    fn get_random_click(&mut self, typ: ClickType, player2: bool) -> (SoundWrapper, ClickType) {
         if player2 {
             self.players
                 .1
@@ -1136,11 +1148,13 @@ impl Bot {
         player as usize == unsafe { *player2 }
     }
 
+    // TODO
     pub fn is_2player(&self) -> bool {
-        if self.playlayer.is_null() {
-            return false;
-        }
-        unsafe { *((self.playlayer as usize + 0x880 + 0x115) as *const bool) }
+        self.conf.force_2player
+        // if self.playlayer.is_null() {
+        //     return false;
+        // }
+        // GameManager::shared().level_settings().is_2player()
     }
 
     fn get_pitch(&self) -> f64 {
@@ -1163,7 +1177,6 @@ impl Bot {
 
     pub fn on_reset(&mut self) {
         self.level_start = Instant::now();
-        self.did_just_reset = true;
     }
 
     pub fn on_action(&mut self, push: bool, player2: bool) {
@@ -1176,9 +1189,8 @@ impl Bot {
         if self.num_sounds == (0, 0) || self.playlayer.is_null() || !self.conf.enabled {
             return;
         }
-        if unsafe { *((self.playlayer as usize + 0x2f17) as *const bool) }
-            || unsafe { *((self.playlayer as usize + 0x328) as *const f64) < 0.05 }
-        {
+        // let pl_time = unsafe { *((self.playlayer as usize + 0x328) as *const f64)
+        if unsafe { *((self.playlayer as usize + 0x2f17) as *const bool) } {
             return;
         }
 
@@ -1393,7 +1405,7 @@ impl Bot {
                 ui.selectable_value(&mut self.conf.stage, Stage::Clickpack, "Clickpack");
                 ui.selectable_value(&mut self.conf.stage, Stage::Audio, "Audio");
                 ui.selectable_value(&mut self.conf.stage, Stage::Options, "Options");
-                ui.selectable_value(&mut self.conf.stage, Stage::Cheats, "Cheats");
+                // ui.selectable_value(&mut self.conf.stage, Stage::Cheats, "Cheats");
             });
             ui.separator();
 
@@ -1447,20 +1459,34 @@ impl Bot {
         toasts: &mut Toasts,
     ) {
         ui.collapsing("Shortcuts", |ui| {
-            ui.add(
-                Keybind::new(&mut self.conf.shortcuts.toggle_menu, "toggle_menu_keybind")
-                    .with_text("Toggle menu"),
+            let mut show_shortcut = |shortcut: &mut Shortcut, id: &'static str, name: &str| {
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| ui.add(Keybind::new(shortcut, id).with_text(name)));
+                    if *shortcut != Shortcut::NONE {
+                        if ui
+                            .button("Clear")
+                            .on_hover_text("Set the shortcut to none")
+                            .clicked()
+                        {
+                            *shortcut = Shortcut::NONE;
+                        }
+                    }
+                });
+            };
+            show_shortcut(
+                &mut self.conf.shortcuts.toggle_menu,
+                "toggle_menu_keybind",
+                "Toggle menu",
             );
-            ui.add(
-                Keybind::new(&mut self.conf.shortcuts.toggle_bot, "toggle_bot_keybind")
-                    .with_text("Toggle bot"),
+            show_shortcut(
+                &mut self.conf.shortcuts.toggle_bot,
+                "toggle_bot_keybind",
+                "Toggle bot",
             );
-            ui.add(
-                Keybind::new(
-                    &mut self.conf.shortcuts.toggle_noise,
-                    "toggle_noise_keybind",
-                )
-                .with_text("Toggle noise"),
+            show_shortcut(
+                &mut self.conf.shortcuts.toggle_noise,
+                "toggle_noise_keybind",
+                "Toggle noise",
             );
         });
         ui.collapsing("Configuration", |ui| {
@@ -1789,6 +1815,12 @@ impl Bot {
                     self.play_noise();
                 }
             },
+        );
+
+        help_text(
+            ui,
+            "Always play 2-player sounds even in regular levels when the player 2 button is pressed",
+            |ui| ui.checkbox(&mut self.conf.force_2player, "Force 2-player mode"),
         );
 
         #[cfg(feature = "special")]
@@ -2207,6 +2239,29 @@ impl Bot {
                     "Last spam volume offset: {:.4}",
                     self.prev_spam_offset
                 ));
+
+                let format_path = |path: &Path| {
+                    path.to_string_lossy()
+                        .replace("\\", "/")
+                        .replacen(".zcb/clickpacks/", "", 1)
+                };
+                let format_path_keep_root = |path: &Path| path.to_string_lossy().replace("\\", "/");
+
+                ui.label(format!(
+                    "Last player 1 sound: {:?}",
+                    format_path(&self.players.0.last_sound_path)
+                ));
+                ui.label(format!(
+                    "Last player 2 sound: {:?}",
+                    format_path(&self.players.1.last_sound_path)
+                ));
+                ui.label(format!(
+                    "Clickpack path: {:?}",
+                    format_path_keep_root(&self.selected_clickpack_path)
+                ));
+                if !self.playlayer.is_null() {
+                    ui.label(format!("Is 2-player level / forced? {}", self.is_2player()));
+                }
             });
         }
     }
