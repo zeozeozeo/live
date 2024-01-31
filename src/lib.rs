@@ -1,19 +1,23 @@
 #![feature(concat_idents)]
 
 mod bot;
-mod hooks;
-mod utils;
+
+#[cfg(not(feature = "geode"))]
 mod game_manager;
 
-use bot::BOT;
-use egui_opengl_internal::OpenGLApp;
+#[cfg(not(feature = "geode"))]
+mod hooks;
+
+mod utils;
+
+use bot::{PlayerButton, BOT};
 use retour::static_detour;
 use std::{ffi::c_void, sync::Once};
 use windows::Win32::{
     Foundation::{BOOL, HMODULE, HWND, LPARAM, LRESULT, TRUE, WPARAM},
     Graphics::Gdi::{WindowFromDC, HDC},
     System::{
-        LibraryLoader::FreeLibraryAndExitThread,
+        LibraryLoader::{FreeLibraryAndExitThread, GetModuleHandleA, GetProcAddress},
         SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH},
         Threading::{CreateThread, THREAD_CREATION_FLAGS},
     },
@@ -30,27 +34,6 @@ type FnWglSwapBuffers = unsafe extern "system" fn(HDC) -> i32;
 
 /// returned from SetWindowLongPtrA
 static mut O_WNDPROC: Option<i32> = None;
-static mut EGUI_APP: OpenGLApp<i32> = OpenGLApp::new();
-
-unsafe fn h_wndproc_old(hwnd: HWND, umsg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    static INIT: Once = Once::new();
-    INIT.call_once(|| {
-        log::info!("CallWindowProcW hooked (old)");
-    });
-
-    let egui_wants_input = EGUI_APP.wnd_proc(umsg, wparam, lparam);
-    if egui_wants_input {
-        return LRESULT(1);
-    }
-
-    CallWindowProcA(
-        std::mem::transmute(O_WNDPROC.unwrap()),
-        hwnd,
-        umsg,
-        wparam,
-        lparam,
-    )
-}
 
 /// WNDPROC hook
 #[no_mangle]
@@ -100,6 +83,7 @@ pub unsafe extern "system" fn DllMain(dll: u32, reason: u32, _reserved: *mut c_v
             .unwrap();
         }
         DLL_PROCESS_DETACH => {
+            #[cfg(not(feature = "geode"))]
             hooks::disable_hooks();
             FreeLibraryAndExitThread(std::mem::transmute::<_, HMODULE>(dll), 0);
         }
@@ -108,30 +92,10 @@ pub unsafe extern "system" fn DllMain(dll: u32, reason: u32, _reserved: *mut c_v
     TRUE
 }
 
-fn hk_wgl_swap_buffers_old(hdc: HDC) -> i32 {
-    unsafe {
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
-            log::info!("wglSwapBuffers hooked (old)");
-            let window = WindowFromDC(hdc);
-            EGUI_APP.init_default(hdc, window, |ctx, _| BOT.draw_ui(ctx));
-
-            O_WNDPROC = Some(std::mem::transmute(SetWindowLongPtrA(
-                window,
-                GWLP_WNDPROC,
-                h_wndproc_old as usize as i32,
-            )));
-        });
-
-        EGUI_APP.render(hdc);
-        h_wglSwapBuffers.call(hdc)
-    }
-}
-
 fn hk_wgl_swap_buffers(hdc: HDC) -> i32 {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
-        log::info!("wglSwapBuffers hooked (new)");
+        log::info!("wglSwapBuffers hooked");
     });
 
     unsafe {
@@ -177,22 +141,15 @@ unsafe extern "system" fn zcblive_main(_hmod: *mut c_void) -> u32 {
     BOT.maybe_alloc_console();
 
     // get swapbuffers function
-    let swap_buffers: FnWglSwapBuffers = std::mem::transmute(
-        egui_opengl_internal::utils::get_proc_address("wglSwapBuffers"),
-    );
+    let opengl = GetModuleHandleA(windows::core::s!("OPENGL32.dll")).unwrap();
+    let swap_buffers: FnWglSwapBuffers =
+        std::mem::transmute(GetProcAddress(opengl, windows::core::s!("wglSwapBuffers")));
 
     log::info!("wglSwapBuffers: {:#X}", swap_buffers as usize);
 
     // initialize swapbuffers hook
     h_wglSwapBuffers
-        .initialize(
-            swap_buffers,
-            if BOT.used_old_egui_hook {
-                hk_wgl_swap_buffers_old
-            } else {
-                hk_wgl_swap_buffers
-            },
-        )
+        .initialize(swap_buffers, hk_wgl_swap_buffers)
         .unwrap()
         .enable()
         .unwrap();
@@ -203,15 +160,37 @@ unsafe extern "system" fn zcblive_main(_hmod: *mut c_void) -> u32 {
 }
 
 // functions for other mods to call if they need it for some reason
+// also used for geode
 
 #[no_mangle]
-#[inline(never)]
-unsafe extern "system" fn zcblive_action_callback(push: bool, player2: bool) {
-    BOT.on_action(push, player2)
+unsafe extern "system" fn zcblive_on_action(push: bool, player2: bool, button: u8) {
+    if let Some(button) = PlayerButton::from_u8(button) {
+        BOT.on_action(push, player2, button)
+    }
+}
+
+#[cfg(not(feature = "geode"))]
+#[no_mangle]
+unsafe extern "system" fn zcblive_set_playlayer(playlayer: *mut c_void /*PlayLayer*/) {
+    BOT.playlayer = playlayer;
 }
 
 #[no_mangle]
-#[inline(never)]
-unsafe extern "system" fn zcblive_set_playlayer(playlayer: *mut c_void /*PlayLayer*/) {
-    BOT.playlayer = playlayer;
+unsafe extern "system" fn zcblive_set_is_in_level(is_in_level: bool) {
+    BOT.is_in_level = is_in_level;
+}
+
+#[no_mangle]
+unsafe extern "system" fn zcblive_set_playlayer_time(playlayer_time: f64) {
+    BOT.playlayer_time = playlayer_time;
+}
+
+#[no_mangle]
+unsafe extern "system" fn zcblive_on_playlayer_init() {
+    BOT.on_init()
+}
+
+#[no_mangle]
+unsafe extern "system" fn zcblive_on_basegamelayer_reset() {
+    BOT.on_reset()
 }

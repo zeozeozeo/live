@@ -1,0 +1,42 @@
+thread 'rustc' panicked at compiler\rustc_errors\src\diagnostic_builder.rs:776:21:
+error was constructed but not emitted
+stack backtrace:
+   0: 0x57c8c641 - std::backtrace::Backtrace::force_capture::h8a911992bc853ffa
+   1: 0x5867fdb7 - <rustc_data_structures[ef521587cb17b318]::hashes::Hash64 as core[1382a0fbd961dc63]::fmt::Debug>::fmt
+   2: 0x57ca61fd - <std::panicking::begin_panic_handler::StaticStrPayload as core::panic::PanicPayload>::take_box::h1d247f7651d79294
+   3: 0x57ca3685 - <std::sys_common::backtrace::_print::DisplayBacktrace as core::fmt::Display>::fmt::hfb6ce2f668a8a78f
+   4: 0x5c8ecdca - <rustc_parse[e46488156c8fe729]::parser::Parser>::create_snapshot_for_diagnostic
+   5: 0x5c999b64 - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_full_stmt
+   6: 0x5c99902f - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_block
+   7: 0x5c998e2c - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_block
+   8: 0x5c96d2e3 - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_foreign_item
+   9: 0x5c94cc9d - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_item
+  10: 0x5c94acba - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_item
+  11: 0x5c94a28f - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_item
+  12: 0x5c953233 - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_item
+  13: 0x5c94e225 - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_item
+  14: 0x5c94acba - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_item
+  15: 0x5c94a28f - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_item
+  16: 0x5c9495ee - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_mod
+  17: 0x5c725a70 - rustc_expand[80eb0650ccacea13]::module::parse_external_mod
+  18: 0x5c78f626 - <rustc_ast[8b46f4c4a79a95b]::ptr::P<rustc_ast[8b46f4c4a79a95b]::ast::Item> as rustc_expand[80eb0650ccacea13]::expand::InvocationCollectorNode>::take_mac_call
+  19: 0x5c739346 - <rustc_expand[80eb0650ccacea13]::expand::InvocationCollector as rustc_ast[8b46f4c4a79a95b]::mut_visit::MutVisitor>::flat_map_item
+  20: 0x5c8113fa - <rustc_expand[80eb0650ccacea13]::mbe::macro_parser::MatcherLoc as core[1382a0fbd961dc63]::fmt::Display>::fmt
+  21: 0x5c74413e - <rustc_expand[80eb0650ccacea13]::expand::InvocationCollector as rustc_ast[8b46f4c4a79a95b]::mut_visit::MutVisitor>::visit_crate
+  22: 0x5c7360ff - <rustc_expand[80eb0650ccacea13]::expand::MacroExpander>::fully_expand_fragment
+  23: 0x5c731625 - <rustc_expand[80eb0650ccacea13]::expand::MacroExpander>::fully_expand_fragment
+  24: 0x5c7310fc - <rustc_expand[80eb0650ccacea13]::expand::MacroExpander>::expand_crate
+  25: 0x587b68c1 - time_core[88ea624ca898f106]::util::weeks_in_year
+  26: 0x587fb77a - rustc_interface[cc1853b0f16c00de]::passes::resolver_for_lowering
+  27: 0x5bc47d3d - <rustc_query_impl[63621b829f49a057]::plumbing::QueryCtxt as rustc_query_system[16ce51c4bbf8c7c]::query::QueryContext>::depth_limit_error
+  28: 0x5bdcc458 - <rustc_query_impl[63621b829f49a057]::plumbing::QueryCtxt as rustc_query_system[16ce51c4bbf8c7c]::query::QueryContext>::depth_limit_error
+  29: 0x5bc5b16a - <rustc_query_impl[63621b829f49a057]::plumbing::QueryCtxt as rustc_query_system[16ce51c4bbf8c7c]::query::QueryContext>::depth_limit_error
+  30: 0x586786f3 - <rustc_data_structures[ef521587cb17b318]::hashes::Hash64 as core[1382a0fbd961dc63]::fmt::Debug>::fmt
+
+
+rustc version: 1.76.0-nightly (3a85a5cfe 2023-11-20)
+platform: i686-pc-windows-msvc
+
+query stack during panic:
+#0 [resolver_for_lowering] getting the resolver for lowering
+end of query stack

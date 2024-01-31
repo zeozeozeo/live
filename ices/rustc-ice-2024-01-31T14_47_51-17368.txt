@@ -1,0 +1,38 @@
+thread 'main' panicked at compiler\rustc_errors\src\diagnostic_builder.rs:776:21:
+error was constructed but not emitted
+stack backtrace:
+   0: 0x57c8c641 - std::backtrace::Backtrace::force_capture::h8a911992bc853ffa
+   1: 0x5867fdb7 - <rustc_data_structures[ef521587cb17b318]::hashes::Hash64 as core[1382a0fbd961dc63]::fmt::Debug>::fmt
+   2: 0x57ca61fd - <std::panicking::begin_panic_handler::StaticStrPayload as core::panic::PanicPayload>::take_box::h1d247f7651d79294
+   3: 0x57ca3685 - <std::sys_common::backtrace::_print::DisplayBacktrace as core::fmt::Display>::fmt::hfb6ce2f668a8a78f
+   4: 0x5c8ecdca - <rustc_parse[e46488156c8fe729]::parser::Parser>::create_snapshot_for_diagnostic
+   5: 0x5c999b64 - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_full_stmt
+   6: 0x5c99902f - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_block
+   7: 0x5c998e2c - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_block
+   8: 0x5c96d2e3 - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_foreign_item
+   9: 0x5c94cc9d - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_item
+  10: 0x5c94acba - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_item
+  11: 0x5c94a28f - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_item
+  12: 0x5c953233 - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_item
+  13: 0x5c94e225 - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_item
+  14: 0x5c94acba - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_item
+  15: 0x5c94a28f - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_item
+  16: 0x5c9495ee - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_mod
+  17: 0x5c9491c9 - <rustc_parse[e46488156c8fe729]::parser::Parser>::parse_crate_mod
+  18:   0x27ee88 - <unknown>
+  19:   0x27a516 - <unknown>
+  20:   0x277de6 - <unknown>
+  21:   0x27cf5a - <unknown>
+  22:   0x27afe5 - <unknown>
+  23:   0x269c5d - <unknown>
+  24:   0x2688bf - <unknown>
+  25:   0x26557c - <unknown>
+  26:   0x280a24 - <unknown>
+  27:   0x27ac65 - <unknown>
+  28: 0x761000c9 - BaseThreadInitThunk
+  29: 0x77d07b1e - RtlGetAppContainerNamedObjectPath
+  30: 0x77d07aee - RtlGetAppContainerNamedObjectPath
+
+
+rustc version: 1.76.0-nightly (3a85a5cfe 2023-11-20)
+platform: i686-pc-windows-msvc

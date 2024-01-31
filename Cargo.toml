@@ -25,7 +25,7 @@ egui-keybind = { version = "0.2.5", features = ["serde"] }
 egui-modal = "0.3.2"
 egui-toast = "0.11.0"
 egui_gl_hook = { path = "egui_gl_hook" }
-egui-opengl-internal = { path = "egui-opengl-internal" }
+# egui-opengl-internal = { path = "egui-opengl-internal" }
 # geometrydash = { path = "../../geometrydash" }
 kittyaudio = { git = "https://github.com/zeozeozeo/kittyaudio.git" }
 log = "0.4.20"
@@ -52,6 +52,6 @@ windows = { version = "0.52.0", features = ["Win32_System_Threading",
 built = "0.7.1"
 
 [features]
-default = ["22"]
+default = ["geode"]
 special = []
-22 = []
+geode = []

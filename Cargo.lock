@@ -783,7 +783,6 @@ dependencies = [
  "egui",
  "egui-keybind",
  "egui-modal",
- "egui-opengl-internal",
  "egui-toast",
  "egui_gl_hook",
  "kittyaudio",
