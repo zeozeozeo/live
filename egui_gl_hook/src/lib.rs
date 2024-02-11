@@ -448,13 +448,13 @@ fn alter_modifiers(state: &mut EguiState, new: Modifiers) {
 fn get_key(wparam: usize) -> Option<Key> {
     match wparam {
         // number keys
-        0x30..=0x39 => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x13)) },
+        0x30..=0x39 => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x10)) },
         // letter keys
-        0x41..=0x5A => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x1A)) },
+        0x41..=0x5A => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x17)) },
         // numpad keys
-        0x60..=0x69 => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x43)) },
+        0x60..=0x69 => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x40)) },
         // f1-f20
-        0x70..=0x83 => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x2F)) },
+        0x70..=0x83 => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x2C)) },
         _ => match VIRTUAL_KEY(wparam as u16) {
             VK_DOWN => Some(Key::ArrowDown),
             VK_LEFT => Some(Key::ArrowLeft),
