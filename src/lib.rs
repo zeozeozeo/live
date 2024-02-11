@@ -2,8 +2,8 @@
 
 mod bot;
 
-#[cfg(not(feature = "geode"))]
-mod game_manager;
+// #[cfg(not(feature = "geode"))]
+// mod game_manager;
 
 #[cfg(not(feature = "geode"))]
 mod hooks;
@@ -115,13 +115,13 @@ fn hk_wgl_swap_buffers(hdc: HDC) -> i32 {
         }
 
         // paint this frame
-        egui_gl_hook::paint(
+        let _ = egui_gl_hook::paint(
             hdc,
             Box::new(|ctx| {
                 BOT.draw_ui(ctx);
             }),
         )
-        .expect("failed to call paint()");
+        .map_err(|e| log::error!("paint() failed: {e}"));
         h_wglSwapBuffers.call(hdc)
     }
 }
@@ -169,10 +169,13 @@ unsafe extern "system" fn zcblive_on_action(push: bool, player2: bool, button: u
     }
 }
 
-#[cfg(not(feature = "geode"))]
 #[no_mangle]
+#[allow(unused_variables)]
 unsafe extern "system" fn zcblive_set_playlayer(playlayer: *mut c_void /*PlayLayer*/) {
-    BOT.playlayer = playlayer;
+    #[cfg(not(feature = "geode"))]
+    {
+        BOT.playlayer = playlayer;
+    }
 }
 
 #[no_mangle]
