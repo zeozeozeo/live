@@ -19,16 +19,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c71b1793ee61086797f5c80b6efa2b8ffa6d5dd703f118545808a7f2e27f7046"
 
 [[package]]
-name = "accesskit"
-version = "0.12.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cb10ed32c63247e4e39a8f42e8e30fb9442fbf7878c8e4a9849e7e381619bea"
-dependencies = [
- "enumn",
- "serde",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -36,7 +26,6 @@ checksum = "42cd52102d3df161c77a887b608d7a4897d7cc112886a9537b738a887a03aaff"
 dependencies = [
  "cfg-if",
  "once_cell",
- "serde",
  "version_check",
  "zerocopy",
 ]
@@ -362,11 +351,11 @@ checksum = "57539aabcdbb733b6806ef421b66dec158dc1582107ad6d51913db3600303354"
 
 [[package]]
 name = "ecolor"
-version = "0.26.1"
-source = "git+https://github.com/zeozeozeo/egui.git?branch=tesselate-return-option#456827a97bd376b0d5ff4770d135e9e5ff129d37"
+version = "0.26.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03cfe80b1890e1a8cdbffc6044d6872e814aaf6011835a2a5e2db0e5c5c4ef4e"
 dependencies = [
  "bytemuck",
- "serde",
 ]
 
 [[package]]
@@ -382,31 +371,31 @@ dependencies = [
 
 [[package]]
 name = "egui"
-version = "0.26.1"
-source = "git+https://github.com/zeozeozeo/egui.git?branch=tesselate-return-option#456827a97bd376b0d5ff4770d135e9e5ff129d37"
+version = "0.26.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "180f595432a5b615fc6b74afef3955249b86cfea72607b40740a4cd60d5297d0"
 dependencies = [
- "accesskit",
  "ahash",
- "epaint 0.26.1",
+ "epaint 0.26.2",
  "nohash-hasher",
- "serde",
 ]
 
 [[package]]
 name = "egui-keybind"
 version = "0.2.7"
-source = "git+https://github.com/zeozeozeo/egui-keybind.git?branch=my-egui#ff1ff74e8158dc80cc15a10a92bce6402ecc1d25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f16ef1731ed1d0e63d0fa9d6fd95d40f09cc3f3b23934ea2363e725dafdd081b"
 dependencies = [
- "egui 0.26.1",
- "serde",
+ "egui 0.26.2",
 ]
 
 [[package]]
 name = "egui-modal"
 version = "0.3.4"
-source = "git+https://github.com/zeozeozeo/egui-modal.git?branch=my-egui#bf5ef33069d630b4abe006c102e8939e8be4b165"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da17dbe55bb1b04fd8b4624ab1b68f6ec245f44aedc90893463f8dbc70f28231"
 dependencies = [
- "egui 0.26.1",
+ "egui 0.26.2",
 ]
 
 [[package]]
@@ -426,10 +415,11 @@ dependencies = [
 
 [[package]]
 name = "egui-toast"
-version = "0.12.0"
-source = "git+https://github.com/zeozeozeo/egui-toast.git?branch=my-egui#1f44adafb413d74932e6bb2804a8d6a0b29b1d56"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fe0437ed2c827749fb57edb3dc62e796805974b11ce7aed1a001200fee92aba"
 dependencies = [
- "egui 0.26.1",
+ "egui 0.26.2",
 ]
 
 [[package]]
@@ -437,7 +427,7 @@ name = "egui_gl_hook"
 version = "0.1.0"
 dependencies = [
  "clipboard",
- "egui 0.26.1",
+ "egui 0.26.2",
  "egui_glow",
  "thiserror",
  "windows 0.52.0",
@@ -445,15 +435,15 @@ dependencies = [
 
 [[package]]
 name = "egui_glow"
-version = "0.26.1"
-source = "git+https://github.com/zeozeozeo/egui.git?branch=tesselate-return-option#456827a97bd376b0d5ff4770d135e9e5ff129d37"
+version = "0.26.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a08e3be8728b4c59493dbfec041c657e6725bdeafdbd49aef3f1dbb9e551fa01"
 dependencies = [
  "bytemuck",
- "egui 0.26.1",
+ "egui 0.26.2",
  "glow",
  "log",
  "memoffset",
- "raw-window-handle",
  "wasm-bindgen",
  "web-sys",
 ]
@@ -472,11 +462,11 @@ checksum = "3ee58355767587db7ba3738930d93cad3052cd834c2b48b9ef6ef26fe4823b7e"
 
 [[package]]
 name = "emath"
-version = "0.26.1"
-source = "git+https://github.com/zeozeozeo/egui.git?branch=tesselate-return-option#456827a97bd376b0d5ff4770d135e9e5ff129d37"
+version = "0.26.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6916301ecf80448f786cdf3eb51d9dbdd831538732229d49119e2d4312eaaf09"
 dependencies = [
  "bytemuck",
- "serde",
 ]
 
 [[package]]
@@ -486,17 +476,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7268b386296a025e474d5140678f75d6de9493ae55a5d709eeb9dd08149945e1"
 dependencies = [
  "cfg-if",
-]
-
-[[package]]
-name = "enumn"
-version = "0.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fd000fd6988e73bbe993ea3db9b1aa64906ab88766d654973924340c8cddb42"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.48",
 ]
 
 [[package]]
@@ -515,17 +494,17 @@ dependencies = [
 
 [[package]]
 name = "epaint"
-version = "0.26.1"
-source = "git+https://github.com/zeozeozeo/egui.git?branch=tesselate-return-option#456827a97bd376b0d5ff4770d135e9e5ff129d37"
+version = "0.26.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77b9fdf617dd7f58b0c8e6e9e4a1281f730cde0831d40547da446b2bb76a47af"
 dependencies = [
  "ab_glyph",
  "ahash",
  "bytemuck",
- "ecolor 0.26.1",
- "emath 0.26.1",
+ "ecolor 0.26.2",
+ "emath 0.26.2",
  "nohash-hasher",
  "parking_lot",
- "serde",
 ]
 
 [[package]]
@@ -825,7 +804,7 @@ version = "0.2.2"
 dependencies = [
  "anyhow",
  "built",
- "egui 0.26.1",
+ "egui 0.26.2",
  "egui-keybind",
  "egui-modal",
  "egui-toast",
@@ -894,9 +873,9 @@ checksum = "523dc4f511e55ab87b694dc30d0f820d60906ef06413f93d4d7a1385599cc149"
 
 [[package]]
 name = "memoffset"
-version = "0.7.1"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5de893c32cde5f383baa4c04c5d6dbdd735cfd4a794b0debdb2bb1b421da5ff4"
+checksum = "5a634b1c61a95585bd15607c6ab0c4e5b226e695ff2800ba0cdccddf208c406c"
 dependencies = [
  "autocfg",
 ]

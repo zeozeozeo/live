@@ -20,10 +20,10 @@ members = [".", "egui_gl_hook", "egui-opengl-internal"]
 
 [dependencies]
 anyhow = "1.0.79"
-egui = { git = "https://github.com/zeozeozeo/egui.git", branch = "tesselate-return-option" }
-egui-keybind = { git = "https://github.com/zeozeozeo/egui-keybind.git", branch = "my-egui", features = ["serde"] }
-egui-modal = { git = "https://github.com/zeozeozeo/egui-modal.git", branch = "my-egui" }
-egui-toast = { git = "https://github.com/zeozeozeo/egui-toast.git", branch = "my-egui" }
+egui = "0.26.1"
+egui-keybind = "0.2.7"
+egui-modal = "0.3.4"
+egui-toast = "0.12.1"
 egui_gl_hook = { path = "egui_gl_hook" }
 kittyaudio = { git = "https://github.com/zeozeozeo/kittyaudio.git" }
 log = "0.4.20"
