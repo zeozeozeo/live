@@ -1226,7 +1226,7 @@ impl Bot {
             return;
         }
         // is_in_level
-        if !unsafe { *((self.playlayer as usize + 0x2AD0) as *const bool) } {
+        if unsafe { *(self.playlayer as *const bool).offset(0x2f17) } {
             return;
         }
         // let pl_time = unsafe { *((self.playlayer as usize + 0x328) as *const f64)
