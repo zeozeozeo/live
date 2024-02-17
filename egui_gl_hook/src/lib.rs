@@ -16,7 +16,7 @@ use windows::{
             LibraryLoader::{GetModuleHandleA, GetProcAddress},
             SystemServices::{MK_CONTROL, MK_SHIFT},
         },
-        UI::{HiDpi::GetDpiForWindow, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
+        UI::{Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
     },
 };
 
@@ -56,8 +56,6 @@ pub enum Error {
 
     #[error("could not create painter: `{0}`")]
     PainterError(#[from] egui_glow::PainterError),
-    #[error("tesselate() failed")]
-    TesselateError,
 }
 
 /// should be called when exiting to remove gl objects and such
@@ -179,10 +177,7 @@ pub unsafe fn paint(hdc: HDC, run_fn: Box<dyn Fn(&egui::Context)>) -> Result<(),
     }
 
     // convert to meshes
-    let clipped_primitives = state
-        .egui_ctx
-        .tessellate(shapes, pixels_per_point)
-        .ok_or(Error::TesselateError)?;
+    let clipped_primitives = state.egui_ctx.tessellate(shapes, pixels_per_point);
     let dimensions = get_screen_size()?;
 
     state.painter.paint_primitives(

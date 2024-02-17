@@ -1225,6 +1225,10 @@ impl Bot {
         if self.num_sounds == (0, 0) || !self.is_in_level() || !self.conf.enabled {
             return;
         }
+        // is_in_level
+        if !unsafe { *((self.playlayer as usize + 0x2AD0) as *const bool) } {
+            return;
+        }
         // let pl_time = unsafe { *((self.playlayer as usize + 0x328) as *const f64)
         // if unsafe { *((self.playlayer as usize + 0x2f17) as *const bool) } {
         //     return;
@@ -1438,6 +1442,9 @@ impl Bot {
         for toast in self.toast_queue.lock().unwrap().drain(..) {
             toasts.add(toast);
         }
+
+        // remove tooltip delay
+        ctx.style_mut(|s| s.interaction.tooltip_delay = 0.0);
 
         egui::Window::new("ZCB Live").show(ctx, |ui| {
             ui.horizontal(|ui| {
