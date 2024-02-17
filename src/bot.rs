@@ -1847,6 +1847,7 @@ impl Bot {
             });
         });
 
+        /*
         help_text(
             ui,
             "Use the internal audio engine for integration with internal recorders",
@@ -1862,6 +1863,7 @@ impl Bot {
                 }
             },
         );
+        */
 
         help_text(
             ui,
