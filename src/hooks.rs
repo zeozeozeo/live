@@ -138,13 +138,15 @@ unsafe extern "fastcall" fn release_button(
 ) -> bool {
     let res = call_hook!(ReleaseButton(player, std::ptr::null_mut(), button));
     // log::info!("rbutton: {button}");
-    unsafe {
-        BOT.on_action(
-            false,
-            BOT.is_player2_obj(player),
-            crate::bot::PlayerButton::Push,
-        )
-    };
+    if BOT.playlayer_time == 0. {
+        unsafe {
+            BOT.on_action(
+                false,
+                BOT.is_player2_obj(player),
+                crate::bot::PlayerButton::Push,
+            )
+        };
+    }
     res
 }
 
