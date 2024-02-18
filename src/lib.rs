@@ -163,9 +163,9 @@ unsafe extern "system" fn zcblive_main(_hmod: *mut c_void) -> u32 {
 // also used for geode
 
 #[no_mangle]
-unsafe extern "system" fn zcblive_on_action(push: bool, player2: bool, button: u8) {
+unsafe extern "system" fn zcblive_on_action(button: u8, player2: bool) {
     if let Some(button) = PlayerButton::from_u8(button) {
-        BOT.on_action(push, player2, button)
+        BOT.on_action(button, player2)
     }
 }
 
