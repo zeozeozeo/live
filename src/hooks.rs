@@ -11,7 +11,6 @@ type FnReset = unsafe extern "fastcall" fn(*mut c_void, *mut c_void);
 type FnPushButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
 type FnReleaseButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
 //type FnUpdate = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, f32);
-type FnDestroyPlayer = unsafe extern "fastcall" fn(*mut c_void) -> i32;
 type FnHandleButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32, i32, bool) -> i32;
 
 static_detour! {
@@ -21,7 +20,6 @@ static_detour! {
     static PushButton: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
     static ReleaseButton: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
     static Update: unsafe extern "fastcall" fn (*mut c_void, *mut c_void, f32);
-    static DestroyPlayer: unsafe extern "fastcall" fn(*mut c_void) -> i32;
     static HandleButton: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32, i32, bool) -> i32;
 }
 
@@ -41,7 +39,7 @@ make_minhook_statics!(
     PushButton_MinHook,
     ReleaseButton_MinHook,
     // Update_MinHook,
-    DestroyPlayer_MinHook,
+    // DestroyPlayer_MinHook,
     HandleButton_MinHook
 );
 
@@ -142,15 +140,6 @@ unsafe extern "fastcall" fn release_button(
 }
 
 make_retour_fn!(release_button, release_button_retour(player: *mut c_void, _edx: *mut c_void, button: i32) -> bool);
-
-unsafe extern "fastcall" fn destroy_player(this: *mut c_void) -> i32 {
-    if BOT.conf.cheats.noclip {
-        return 0;
-    }
-    return call_hook!(DestroyPlayer(this));
-}
-
-make_retour_fn!(destroy_player, destroy_player_retour(this: *mut c_void) -> i32);
 
 unsafe extern "fastcall" fn handle_button(
     basegamelayer: *mut c_void,
@@ -279,7 +268,6 @@ pub unsafe fn init_hooks() {
     // hook!(Init, init, 0x18cc80);
     hook!(Reset, reset, 0x2EA130);
     // hook!(Update, update, 0x1BA700);
-    hook!(DestroyPlayer, destroy_player, 0x27AE40);
 
     if unsafe { BOT.used_minhook } {
         log::info!("enabling all minhook hooks");
@@ -306,7 +294,7 @@ macro_rules! disable_hooks {
 pub unsafe fn disable_hooks() {
     log::info!("disabling hooks");
 
-    disable_hooks!(Reset, DestroyPlayer);
+    disable_hooks!(Reset);
     if unsafe { BOT.used_alternate_hook } {
         disable_hooks!(HandleButton);
     } else {

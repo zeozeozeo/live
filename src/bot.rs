@@ -591,12 +591,6 @@ pub enum Stage {
     Clickpack,
     Audio,
     Options,
-    Cheats,
-}
-
-#[derive(Serialize, Deserialize, Clone, PartialEq, Default)]
-pub struct Cheats {
-    pub noclip: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
@@ -643,8 +637,6 @@ pub struct Config {
     pub hook_wait: bool,
     #[serde(default = "bool::default")]
     pub use_minhook: bool,
-    #[serde(default = "Cheats::default")]
-    pub cheats: Cheats,
 }
 
 impl Config {
@@ -681,7 +673,6 @@ impl Default for Config {
             // sync_speed_with_game: true,
             hook_wait: false,
             use_minhook: true,
-            cheats: Cheats::default(),
         }
     }
 }
@@ -1474,17 +1465,12 @@ impl Bot {
                         });
                     }
                     Stage::Options => self.show_options_window(ui, modal.clone(), &mut toasts),
-                    Stage::Cheats => self.show_cheats_window(ui),
                 };
             });
         });
 
         toasts.show(ctx);
         modal.lock().unwrap().show_dialog();
-    }
-
-    fn show_cheats_window(&mut self, ui: &mut egui::Ui) {
-        ui.checkbox(&mut self.conf.cheats.noclip, "Noclip");
     }
 
     pub fn maybe_alloc_console(&self) {
