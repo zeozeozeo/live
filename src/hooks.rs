@@ -1,4 +1,4 @@
-use crate::BOT;
+use crate::{bot::PlayerButton, BOT};
 // use geometrydash::{get_base, patch_mem, AddressUtils, GameManager, PlayLayer, PlayerObject, Ptr};
 use retour::static_detour;
 use std::{ffi::c_void, sync::Once};
@@ -125,7 +125,7 @@ unsafe extern "fastcall" fn push_button(
     //log::info!("pbutton: {button}");
     let is_p2 = BOT.is_player2_obj(player);
     let is_2player = BOT.is_2player();
-    unsafe { BOT.on_action(true, is_p2 && is_2player, crate::bot::PlayerButton::Push) };
+    BOT.on_action(PlayerButton::Push, is_p2 && is_2player);
     res
 }
 
@@ -137,14 +137,7 @@ unsafe extern "fastcall" fn release_button(
     button: i32,
 ) -> bool {
     let res = call_hook!(ReleaseButton(player, std::ptr::null_mut(), button));
-    // log::info!("rbutton: {button}");
-    unsafe {
-        BOT.on_action(
-            false,
-            BOT.is_player2_obj(player),
-            crate::bot::PlayerButton::Push,
-        )
-    };
+    BOT.on_action(PlayerButton::Release, BOT.is_player2_obj(player));
     res
 }
 
@@ -174,7 +167,12 @@ unsafe extern "fastcall" fn handle_button(
         is_player1
     ));
     // log::info!("handle_button: {push}, {button}, {is_player1}");
-    unsafe { BOT.on_action(push != 0, !is_player1, crate::bot::PlayerButton::Push) };
+    unsafe {
+        BOT.on_action(
+            PlayerButton::from_u8(push as u8).unwrap_or_default(),
+            !is_player1,
+        )
+    };
     res
 }
 

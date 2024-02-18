@@ -33,7 +33,9 @@ pub mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
+#[derive(PartialEq, Default)]
 pub enum PlayerButton {
+    #[default]
     Push,
     Release,
     Left,
@@ -1215,10 +1217,10 @@ impl Bot {
         self.level_start = Instant::now();
     }
 
-    pub unsafe fn on_action(&mut self, push: bool, player2: bool, _button: PlayerButton) {
+    pub unsafe fn on_action(&mut self, button: PlayerButton, player2: bool) {
         // log::info!(
         //     "on action: palyelayer: {:#x}, base: {:#x}",
-        //     self.playlayer as usize,
+        //     self.playlayer as usize,d
         //     get_base()
         // );
         //log::info!("push: {push}");
@@ -1248,7 +1250,7 @@ impl Bot {
 
         let now = self.time();
         let dt = (now - self.prev_time).abs() as f32;
-        let click_type = ClickType::from_time(push, dt, &self.conf.timings);
+        let click_type = ClickType::from_time(button == PlayerButton::Push, dt, &self.conf.timings);
         let use_fmod = self.conf.use_fmod;
 
         // get click
