@@ -1167,12 +1167,13 @@ impl Bot {
         #[cfg(not(feature = "geode"))]
         {
             // !self.playlayer.is_null() && self.playlayer.player2() == player
-            if !self.is_in_level() {
-                return false;
-            }
-            let player2 = (self.playlayer as usize + 2172) as *const usize;
-            return player as usize == unsafe { *player2 };
+            if !self.is_in_level() { return false; } 
+            if !GameManager::shared().level_settings().is_2player(); { return false; }
+            
+            let player2 = (self.playlayer as usize + 0x87C) as *const usize; // u can remove *const if u want ^^
+            player as usize == unsafe { *player2 }
         }
+        
         #[cfg(feature = "geode")]
         return false;
     }
