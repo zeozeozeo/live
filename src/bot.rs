@@ -1167,24 +1167,21 @@ impl Bot {
         #[cfg(not(feature = "geode"))]
         {
             // !self.playlayer.is_null() && self.playlayer.player2() == player
-            if !self.is_in_level() { return false; } 
-            if !GameManager::shared().level_settings().is_2player(); { return false; }
-            
+            if !self.is_in_level() {
+                return false;
+            }
+            /* TODO
+            if !GameManager::shared().level_settings().is_2player() {
+                return false;
+            }
+            */
+
             let player2 = (self.playlayer as usize + 0x87C) as *const usize; // u can remove *const if u want ^^
             player as usize == unsafe { *player2 }
         }
-        
+
         #[cfg(feature = "geode")]
         return false;
-    }
-
-    // TODO
-    pub fn is_2player(&self) -> bool {
-        self.conf.force_2player
-        // if self.playlayer.is_null() {
-        //     return false;
-        // }
-        // GameManager::shared().level_settings().is_2player()
     }
 
     fn get_pitch(&self) -> f64 {
@@ -2297,7 +2294,7 @@ impl Bot {
                     "Clickpack path: {:?}",
                     format_path_keep_root(&self.selected_clickpack_path)
                 ));
-                ui.label(format!("Is 2-player level / forced? {}", self.is_2player()));
+                // ui.label(format!("Is 2-player level / forced? {}", self.is_2player()));
             });
         }
     }

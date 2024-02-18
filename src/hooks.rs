@@ -123,7 +123,7 @@ unsafe extern "fastcall" fn push_button(
     //log::info!("pbutton: {button}");
     // let is_p2 = BOT.is_player2_obj(player);
     // let is_2player = BOT.is_2player();
-    
+
     BOT.on_action(PlayerButton::Push, BOT.is_player2_obj(player));
     res
 }
@@ -136,9 +136,7 @@ unsafe extern "fastcall" fn release_button(
     button: i32,
 ) -> bool {
     let res = call_hook!(ReleaseButton(player, std::ptr::null_mut(), button));
-    if playlayer_time != 0. {
-        BOT.on_action(PlayerButton::Release, BOT.is_player2_obj(player));
-    }
+    BOT.on_action(PlayerButton::Release, BOT.is_player2_obj(player));
     res
 }
 
