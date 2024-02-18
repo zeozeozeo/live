@@ -1215,7 +1215,7 @@ impl Bot {
         self.level_start = Instant::now();
     }
 
-    pub fn on_action(&mut self, push: bool, player2: bool, _button: PlayerButton) {
+    pub unsafe fn on_action(&mut self, push: bool, player2: bool, _button: PlayerButton) {
         // log::info!(
         //     "on action: palyelayer: {:#x}, base: {:#x}",
         //     self.playlayer as usize,
@@ -1226,7 +1226,7 @@ impl Bot {
             return;
         }
         // is_in_level
-        if unsafe { *(self.playlayer as *const bool).offset(0x2f17) } {
+        if *(self.playlayer as *const bool).offset(0x2f17) || BOT.playlayer_time == 0.0 {
             return;
         }
         // let pl_time = unsafe { *((self.playlayer as usize + 0x328) as *const f64)
