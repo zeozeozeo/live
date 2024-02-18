@@ -258,6 +258,7 @@ macro_rules! hook {
 
 pub unsafe fn init_hooks() {
     // std::thread::sleep(std::time::Duration::from_secs(2));
+    log::warn!(">>>>>> If you are using Geode, YOU SHOULDN'T SEE THIS!!!");
 
     if unsafe { BOT.used_alternate_hook } {
         hook!(HandleButton, handle_button, 0x1b69f0);

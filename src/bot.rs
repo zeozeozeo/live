@@ -1219,6 +1219,7 @@ impl Bot {
             return;
         }
         // is_in_level
+        #[cfg(not(feature = "geode"))]
         if *(self.playlayer as *const bool).offset(0x2f17) || BOT.playlayer_time == 0.0 {
             return;
         }
@@ -2245,7 +2246,7 @@ impl Bot {
             );
         }
 
-        if !self.is_loading_clickpack && has_sounds && self.is_in_level() {
+        if !self.is_loading_clickpack && self.is_in_level() {
             ui.separator();
             ui.collapsing("Debug", |ui| {
                 let dur = Duration::from_secs_f64(self.prev_time);
