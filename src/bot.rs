@@ -1210,6 +1210,14 @@ impl Bot {
         self.level_start = Instant::now();
     }
 
+    #[inline]
+    unsafe fn get_playlayer_time(&self) -> f64 {
+        #[cfg(not(feature = "geode"))]
+        return unsafe { *((self.playlayer as usize + 0x328) as *const f64) };
+        #[cfg(feature = "geode")]
+        return self.playlayer_time;
+    }
+
     pub unsafe fn on_action(&mut self, button: PlayerButton, player2: bool) {
         // log::info!(
         //     "on action: palyelayer: {:#x}, base: {:#x}",
@@ -1222,7 +1230,7 @@ impl Bot {
         }
         // is_in_level
         #[cfg(not(feature = "geode"))]
-        if *(self.playlayer as *const bool).offset(0x2f17) || BOT.playlayer_time == 0.0 {
+        if (*(self.playlayer as *const bool).offset(0x2f17)) || self.get_playlayer_time() == 0.0 {
             return;
         }
         // let pl_time = unsafe { *((self.playlayer as usize + 0x328) as *const f64)
@@ -1336,9 +1344,6 @@ impl Bot {
             return unsafe { *((self.playlayer as usize + 0x328) as *const f64) };
             #[cfg(feature = "geode")]
             return self.playlayer_time;
-            // self.playlayer
-            //     .to_option()
-            //     .map_or_else(|| self.level_start.elapsed().as_secs_f64(), |p| p.time())
         } else {
             self.level_start.elapsed().as_secs_f64()
         }
@@ -1477,6 +1482,7 @@ impl Bot {
     }
 
     pub fn maybe_alloc_console(&self) {
+        #[cfg(not(feature = "geode"))]
         if self.conf.show_console {
             if unsafe { AllocConsole() }.is_ok() {
                 static INIT_ONCE: Once = Once::new();
@@ -1556,7 +1562,7 @@ impl Bot {
                 "Use if the Debug tab in Clickbot doesn't appear when you enter a level.\nRequires restart!",
                 |ui| ui.checkbox(&mut self.conf.hook_wait, "Wait until hooking"),
             );
-            #[cfg(feature = "geode")]
+            #[cfg(not(feature = "geode"))]
             help_text(ui, "Show debug console", |ui| {
                 if ui
                     .checkbox(&mut self.conf.show_console, "Show console")
