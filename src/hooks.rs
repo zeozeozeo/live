@@ -11,7 +11,7 @@ type FnReset = unsafe extern "fastcall" fn(*mut c_void, *mut c_void);
 type FnPushButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
 type FnReleaseButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
 //type FnUpdate = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, f32);
-type FnHandleButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32, i32, bool) -> i32;
+type FnHandleButton = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, bool, i32, bool) -> i32;
 
 static_detour! {
     static Init: unsafe extern "fastcall" fn(*mut c_void, bool) -> bool;
@@ -20,7 +20,7 @@ static_detour! {
     static PushButton: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
     static ReleaseButton: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32) -> bool;
     static Update: unsafe extern "fastcall" fn (*mut c_void, *mut c_void, f32);
-    static HandleButton: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, i32, i32, bool) -> i32;
+    static HandleButton: unsafe extern "fastcall" fn(*mut c_void, *mut c_void, bool, i32, bool) -> i32;
 }
 
 macro_rules! make_minhook_statics {
@@ -145,7 +145,7 @@ make_retour_fn!(release_button, release_button_retour(player: *mut c_void, _edx:
 unsafe extern "fastcall" fn handle_button(
     basegamelayer: *mut c_void,
     _edx: *mut c_void,
-    push: i32,
+    push: bool,
     button: i32,
     is_player1: bool,
 ) -> i32 {
@@ -159,7 +159,11 @@ unsafe extern "fastcall" fn handle_button(
     log::info!("handle_button: {push}, {button}, {is_player1}");
     unsafe {
         BOT.on_action(
-            PlayerButton::from_u8(push as u8).unwrap_or_default(),
+            if button == 1 {
+                PlayerButton::Push
+            } else {
+                PlayerButton::Release
+            },
             !is_player1,
         )
     };
@@ -171,26 +175,11 @@ make_retour_fn!(
     handle_button_retour(
         basegamelayer: *mut c_void,
         _edx: *mut c_void,
-        a2: i32,
+        a2: bool,
         a3: i32,
         button: bool
     ) -> i32
 );
-
-//macro_rules! patch {
-//    ($addr:expr, $data:expr) => {
-//        let len = $data.len();
-//        let _ = patch_mem($addr, $data)
-//            .map_err(|e| log::error!("failed to write {len} bytes at {:#x}: {e}", $addr));
-//    };
-//}
-
-// unsafe extern "fastcall" fn update(basegamelayer: *mut c_void, _edx: *mut c_void, dt: f32) {
-//     call_hook!(Update(basegamelayer, std::ptr::null_mut(), dt));
-//     unsafe { BOT.restarted_ago = BOT.restarted_ago.saturating_add(1) };
-// }
-//
-// make_retour_fn!(update, update_retour(basegamelayer: *mut c_void, _edx: *mut c_void, dt: f32));
 
 /// GetModuleHandle(NULL)
 #[inline]
@@ -209,32 +198,6 @@ pub fn get_base() -> usize {
     });
     unsafe { BASE }
 }
-
-/// Copies the given data to the given address in memory.
-//fn patch_mem(address: usize, data: &[u8]) -> windows::core::Result<()> {
-//    use windows::Win32::System::Diagnostics::Debug::WriteProcessMemory;
-//    use windows::Win32::System::Memory::{
-//        VirtualProtectEx, PAGE_EXECUTE_READWRITE, PAGE_PROTECTION_FLAGS,
-//    };
-//    use windows::Win32::System::Threading::GetCurrentProcess;
-//    unsafe {
-//        let mut old_prot = PAGE_PROTECTION_FLAGS(0);
-//        VirtualProtectEx(
-//            GetCurrentProcess(),
-//            address as _,
-//            256,
-//            PAGE_EXECUTE_READWRITE,
-//            &mut old_prot as _,
-//        )?;
-//        WriteProcessMemory(
-//            GetCurrentProcess(),
-//            address as _,
-//            data.as_ptr() as _,
-//            data.len(),
-//            None,
-//        )
-//    }
-//}
 
 macro_rules! hook {
     ($static:ident, $detour:ident, $addr:expr) => {

@@ -14,7 +14,7 @@ codegen-units = 1
 strip = true
 
 [workspace]
-members = [".", "egui_gl_hook", "egui-opengl-internal"]
+members = [".", "egui_gl_hook"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

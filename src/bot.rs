@@ -643,6 +643,10 @@ impl Config {
     #[inline]
     pub fn fixup(mut self) -> Self {
         self.buffer_size = self.buffer_size.max(1);
+        #[cfg(feature = "geode")]
+        {
+            self.show_console = false;
+        }
         self
     }
 }
@@ -1457,6 +1461,7 @@ impl Bot {
     }
 
     pub fn maybe_alloc_console(&self) {
+        #[cfg(not(feature = "geode"))]
         if self.conf.show_console {
             if unsafe { AllocConsole() }.is_ok() {
                 static INIT_ONCE: Once = Once::new();
@@ -1536,6 +1541,7 @@ impl Bot {
                 "Use if the Debug tab in Clickbot doesn't appear when you enter a level.\nRequires restart!",
                 |ui| ui.checkbox(&mut self.conf.hook_wait, "Wait until hooking"),
             );
+            #[cfg(not(feature = "geode"))]
             help_text(ui, "Show debug console", |ui| {
                 if ui
                     .checkbox(&mut self.conf.show_console, "Show console")
