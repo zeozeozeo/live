@@ -156,7 +156,7 @@ unsafe extern "fastcall" fn handle_button(
         button,
         is_player1
     ));
-    // log::info!("handle_button: {push}, {button}, {is_player1}");
+    log::info!("handle_button: {push}, {button}, {is_player1}");
     unsafe {
         BOT.on_action(
             PlayerButton::from_u8(push as u8).unwrap_or_default(),

@@ -1206,6 +1206,14 @@ impl Bot {
         self.level_start = Instant::now();
     }
 
+    #[inline]
+    fn get_playlayer_time(&self) -> f64 {
+        #[cfg(not(feature = "geode"))]
+        return unsafe { *((self.playlayer as usize + 0x328) as *const f64) };
+        #[cfg(feature = "geode")]
+        return self.playlayer_time;
+    }
+
     pub unsafe fn on_action(&mut self, button: PlayerButton, player2: bool) {
         // log::info!(
         //     "on action: palyelayer: {:#x}, base: {:#x}",
@@ -1218,26 +1226,9 @@ impl Bot {
         }
         // is_in_level
         #[cfg(not(feature = "geode"))]
-        if *(self.playlayer as *const bool).offset(0x2f17) || BOT.playlayer_time == 0.0 {
+        if *(self.playlayer as *const bool).offset(0x2f17) || self.get_playlayer_time() == 0.0 {
             return;
         }
-        // let pl_time = unsafe { *((self.playlayer as usize + 0x328) as *const f64)
-        // if unsafe { *((self.playlayer as usize + 0x2f17) as *const bool) } {
-        //     return;
-        // }
-
-        // if (!self.playlayer.level_settings().is_2player() && player2)
-        //     || self.playlayer.is_paused()
-        //     || (!push && self.playlayer.time() == 0.0)
-        // {
-        //     return;
-        // }
-
-        // #[cfg(not(feature = "special"))]
-        // if self.playlayer.is_dead() {
-        //     return;
-        // }
-
         let now = self.time();
         let dt = (now - self.prev_time).abs() as f32;
         let click_type = ClickType::from_time(button == PlayerButton::Push, dt, &self.conf.timings);
@@ -1328,17 +1319,10 @@ impl Bot {
     #[inline]
     fn time(&self) -> f64 {
         if self.conf.use_playlayer_time && self.is_in_level() {
-            #[cfg(not(feature = "geode"))]
-            return unsafe { *((self.playlayer as usize + 0x328) as *const f64) };
-            #[cfg(feature = "geode")]
-            return self.playlayer_time;
-            // self.playlayer
-            //     .to_option()
-            //     .map_or_else(|| self.level_start.elapsed().as_secs_f64(), |p| p.time())
+            return self.get_playlayer_time();
         } else {
             self.level_start.elapsed().as_secs_f64()
         }
-        // self.level_start.elapsed().as_secs_f64() // TODO
     }
 
     fn open_clickbot_toggle_toast(&self, toasts: &mut Toasts) {
